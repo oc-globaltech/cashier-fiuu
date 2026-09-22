@@ -58,6 +58,12 @@ return [
     // to the production host rather than guess.
     'sandbox_recurring_url' => env('FIUU_SANDBOX_RECURRING_URL'),
 
+    // The Card APIs (3-D Secure and zero dollar verification) are still served
+    // from the legacy Razer host, like the recurring endpoint.
+    'card_url' => env('FIUU_CARD_URL', 'https://pay.merchant.razer.com'),
+
+    'sandbox_card_url' => env('FIUU_SANDBOX_CARD_URL'),
+
     /*
     |--------------------------------------------------------------------------
     | Extended vcode
@@ -205,6 +211,21 @@ return [
     */
 
     'retry_after' => env('FIUU_RETRY_AFTER', 1440),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Abandoned Payments
+    |--------------------------------------------------------------------------
+    |
+    | How long, in minutes, a payment may sit pending before it is written off
+    | as abandoned. A hosted page session dies within minutes, so a day is
+    | generous. Without this, a customer who closes the tab leaves a row that
+    | is requeried on every run forever, and Fiuu only keeps order lookups for
+    | seven days anyway.
+    |
+    */
+
+    'abandon_after' => env('FIUU_ABANDON_AFTER', 1440),
 
     'max_retries' => env('FIUU_MAX_RETRIES', 3),
 

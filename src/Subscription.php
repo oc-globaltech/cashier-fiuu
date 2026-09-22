@@ -526,6 +526,21 @@ class Subscription extends Model
     }
 
     /**
+     * Determine whether this subscription has ever taken money.
+     *
+     * Fiuu allows an order ID to be paid after an earlier attempt on it
+     * failed, so "first payment" cannot be read off the status alone.
+     */
+    public function hasBegun(?Transaction $except = null): bool
+    {
+        return $this->transactions()
+            ->paid()
+            ->where('type', '!=', Transaction::TYPE_REFUND)
+            ->when($except, fn ($query) => $query->whereKeyNot($except->getKey()))
+            ->exists();
+    }
+
+    /**
      * Record the first confirmed payment, which brings the subscription to life.
      *
      * A trial's payment is only there to produce a card token, so it does not
@@ -533,9 +548,12 @@ class Subscription extends Model
      */
     public function recordFirstPayment(Transaction $transaction): static
     {
+        // A retry of a failed first payment revives the subscription that
+        // failure canceled, so the cancellation has to be lifted with it.
         $this->forceFill([
             'fiuu_status' => static::STATUS_ACTIVE,
             'fiuu_token' => $this->fiuu_token ?: $this->owner?->fiuu_token,
+            'ends_at' => null,
         ])->save();
 
         if ($transaction->type !== Transaction::TYPE_VERIFICATION) {
@@ -575,6 +593,12 @@ class Subscription extends Model
      */
     public function recordFailedPayment(Transaction $transaction): static
     {
+        // A subscription whose very first payment failed never started, and
+        // there is no stored card to retry it against.
+        if ($this->incomplete()) {
+            return $this->cancelNow();
+        }
+
         if ($this->consecutiveFailures() >= (int) config('cashier.max_retries', 3)) {
             return $this->cancelNow();
         }

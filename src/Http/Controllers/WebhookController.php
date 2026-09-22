@@ -123,9 +123,9 @@ class WebhookController extends Controller
         $subscription = $transaction->subscription;
 
         if ($subscription) {
-            $subscription->incomplete()
-                ? $subscription->recordFirstPayment($transaction)
-                : $subscription->recordSuccessfulPayment($transaction);
+            $subscription->hasBegun($transaction)
+                ? $subscription->recordSuccessfulPayment($transaction)
+                : $subscription->recordFirstPayment($transaction);
         }
 
         PaymentSucceeded::dispatch($transaction);
@@ -141,19 +141,7 @@ class WebhookController extends Controller
      */
     protected function storeToken(Transaction $transaction, array $payload): void
     {
-        $extraP = $this->extraP($payload);
-
-        if (empty($extraP['token'])) {
-            return;
-        }
-
-        $owner = $transaction->owner;
-
-        if ($owner && method_exists($owner, 'updateDefaultPaymentMethodFromExtraP')) {
-            $owner->updateDefaultPaymentMethodFromExtraP($extraP);
-        }
-
-        $transaction->subscription?->forceFill(['fiuu_token' => $extraP['token']])->save();
+        $transaction->storeToken($this->extraP($payload));
     }
 
     /**

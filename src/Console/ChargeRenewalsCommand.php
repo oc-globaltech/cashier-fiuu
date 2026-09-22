@@ -67,6 +67,46 @@ class ChargeRenewalsCommand extends Command
     }
 
     /**
+     * Give up on payments Fiuu was never going to confirm.
+     *
+     * A customer who closed the hosted page leaves a row Fiuu may have no
+     * record of at all, so requerying it can never resolve it. Left alone it
+     * would be polled on every run, and a stuck recurring row would hold the
+     * renewal lock open forever.
+     */
+    protected function writeOffAbandoned(): void
+    {
+        $model = Cashier::$transactionModel;
+
+        $cutoff = Carbon::now()->subMinutes((int) config('cashier.abandon_after', 1440));
+
+        (new $model)->newQuery()
+            ->pending()
+            ->where('type', '!=', Transaction::TYPE_REFUND)
+            ->where('created_at', '<=', $cutoff)
+            ->get()
+            ->each(function (Transaction $transaction) {
+                $transaction->markAsFailed([], 'Abandoned: Fiuu never confirmed this payment.');
+
+                $transaction->subscription?->recordFailedPayment($transaction);
+
+                PaymentFailed::dispatch($transaction);
+            });
+    }
+
+    /**
+     * Refunds settle over days and never call back, so they are polled.
+     */
+    protected function reconcileRefund(Transaction $refund): void
+    {
+        try {
+            $refund->refundStatus();
+        } catch (Throwable $e) {
+            $this->error("Refund status of {$refund->order_id} failed: {$e->getMessage()}");
+        }
+    }
+
+    /**
      * Ask Fiuu about charges whose callback never arrived.
      */
     protected function reconcilePending(): void
@@ -75,29 +115,31 @@ class ChargeRenewalsCommand extends Command
 
         $cutoff = Carbon::now()->subMinutes((int) config('cashier.requery_after', 120));
 
+        $this->writeOffAbandoned();
+
+        // Checkouts are reconciled too: an abandoned hosted page never calls
+        // back, and without this its subscription stays incomplete forever.
         (new $model)->newQuery()
             ->pending()
-            ->whereNotNull('fiuu_id')
-            ->whereIn('type', [Transaction::TYPE_RECURRING, Transaction::TYPE_CHARGE])
             ->where('created_at', '<=', $cutoff)
+            ->oldest()
+            ->limit((int) $this->option('limit'))
             ->get()
             ->each(fn (Transaction $transaction) => $this->reconcile($transaction));
     }
 
     protected function reconcile(Transaction $transaction): void
     {
-        try {
-            $result = $transaction->requery();
-        } catch (Throwable $e) {
-            $this->error("Requery of order {$transaction->order_id} failed: {$e->getMessage()}");
+        if ($transaction->type === Transaction::TYPE_REFUND) {
+            $this->reconcileRefund($transaction);
 
             return;
         }
 
-        $fiuu = app(Fiuu::class);
-
-        if (! $fiuu->verifyRequery($result)) {
-            $this->error("Requery of order {$transaction->order_id} returned an unverifiable result.");
+        try {
+            $result = $transaction->requery();
+        } catch (Throwable $e) {
+            $this->error("Requery of order {$transaction->order_id} failed: {$e->getMessage()}");
 
             return;
         }
@@ -122,6 +164,8 @@ class ChargeRenewalsCommand extends Command
             return;
         }
 
+        $transaction->storeToken($result);
+
         $transaction->markAsPaid([
             'tranID' => $result['TranID'] ?? $transaction->fiuu_id,
             'channel' => $result['Channel'] ?? null,
@@ -130,9 +174,9 @@ class ChargeRenewalsCommand extends Command
         $subscription = $transaction->subscription;
 
         if ($subscription) {
-            $subscription->incomplete()
-                ? $subscription->recordFirstPayment($transaction)
-                : $subscription->recordSuccessfulPayment($transaction);
+            $subscription->hasBegun($transaction)
+                ? $subscription->recordSuccessfulPayment($transaction)
+                : $subscription->recordFirstPayment($transaction);
         }
 
         PaymentSucceeded::dispatch($transaction);

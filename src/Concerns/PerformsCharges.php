@@ -103,7 +103,7 @@ trait PerformsCharges
      *
      * @return array<string, mixed>
      */
-    public function refund(string $orderId, ?int $amount = null): array
+    public function refund(string $orderId, ?int $amount = null): Transaction
     {
         $transaction = $this->findTransaction($orderId);
 

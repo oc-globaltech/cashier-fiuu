@@ -100,6 +100,14 @@ class Cashier
      *
      * @param  class-string<Model>  $model
      */
+    /**
+     * The Fiuu API client, for the endpoints Cashier does not wrap.
+     */
+    public static function fiuu(): Fiuu
+    {
+        return app(Fiuu::class);
+    }
+
     public static function useCustomerModel(string $model): void
     {
         static::$customerModel = $model;

@@ -10,7 +10,7 @@ Read this section before anything else. It explains every design decision in the
 
 **Fiuu does not run subscriptions.** Stripe holds your plans, bills on its own schedule and tells you what happened. Fiuu charges an amount against a stored card token whenever you ask it to, and nothing more. This package is therefore the billing engine: plans, intervals, trials, grace periods and renewal dates all live in your database, and the `cashier:renew` command is what actually moves money.
 
-**There is no zero-amount authorization.** Fiuu rejects any transaction of 1.00 or less, so a card cannot be verified for free. A card token only exists after a *real* payment through Fiuu's hosted payment page. This means:
+**A first card token costs a real payment.** Fiuu rejects any transaction of 1.00 or less. It does publish a Zero Dollar Verification API, but that one needs the raw card number, which would put your application inside PCI scope, or a token it has already issued. Neither can mint a *first* token, so one only exists after a real payment through Fiuu's hosted payment page. This means:
 
 - A new customer's first payment is always a redirect, never an API call.
 - A trial still takes one small real payment to tokenize the card. Cashier charges `cashier.trial_charge` (default 2.00) once, records it as a `verification` transaction, and starts normal billing when the trial ends.
@@ -452,7 +452,20 @@ $transaction->refund();
 $transaction->refundable();   // Amount left to refund, in minor units.
 ```
 
-Fiuu accepts refunds within 180 days of the transaction and takes 7-14 days to process them. A same-day void uses a different API, exposed as `Fiuu::reverse()`.
+Each refund is recorded as its own transaction hanging off the payment it came from, because Fiuu can accept a refund today and reject it a week later:
+
+```php
+$transaction->refunds;           // every refund taken out of this payment
+$transaction->refunded_amount;   // the total that has not been rejected
+```
+
+A refund starts `pending` and is settled by `cashier:renew`, which asks Fiuu for its status. A rejected refund returns its amount to `refundable()`. Fiuu accepts refunds within 180 days of the transaction and takes 7-14 days to process them. A same-day void uses a different API, exposed as `Fiuu::reverse()`.
+
+Refund rows share the `transactions` table, so exclude them when you total revenue:
+
+```php
+$user->transactions()->paid()->where('type', '!=', Transaction::TYPE_REFUND)->sum('amount');
+```
 
 ## Transactions
 
@@ -509,6 +522,51 @@ The package's own test suite shows the full pattern for faking a webhook, includ
 ```bash
 composer test
 ```
+
+## The Fiuu API
+
+Cashier wraps the endpoints it needs. The rest of Fiuu's API is on the client, reached through `Cashier::fiuu()`, and every method returns Fiuu's response as an array:
+
+```php
+use OcGlobalTech\CashierFiuu\Cashier;
+
+Cashier::fiuu()->channels();                       // which channels are enabled and up
+Cashier::fiuu()->channelSuccessRate();             // recent success rate per channel
+Cashier::fiuu()->balance();                        // settled merchant balance
+Cashier::fiuu()->fxRates();                        // exchange rates against the ringgit
+Cashier::fiuu()->binInfo('519603');                // brand, bank and country behind a card
+Cashier::fiuu()->recurringPlans();                 // plans defined in the merchant portal
+Cashier::fiuu()->settlementReport('2024-01-01');   // end of day reconciliation
+Cashier::fiuu()->refundReport('2024-01-01');       // transactions held back from a batch
+Cashier::fiuu()->queryByOrderIds(['ord-1']);       // bulk status, last 24 hours only
+Cashier::fiuu()->staticQr('DuitNowSQR', 'ord-1', '50.00');
+Cashier::fiuu()->voidPendingCash('77001', '50.00');
+Cashier::fiuu()->verifyCard('tok_1', 'ref-1', '12', '2030');
+```
+
+`verifyCard()` is Fiuu's zero dollar verification, restricted here to a token Fiuu already issued: it tells you whether a stored card is still live without charging it. It deliberately will not take a raw card number, which would put your application in PCI scope.
+
+Rate limits are Fiuu's, not Cashier's, and they are low. The status queries allow between 5 and 30 requests per second and Fiuu blocks excessive callers without warning, so schedule reports and bulk queries rather than calling them per request.
+
+### Hosts
+
+The Card APIs and the recurring endpoint are still served from the legacy Razer host, and channel status comes from the payment host rather than the API host. Fiuu publishes no sandbox host for the Card or recurring endpoints, so Cashier throws instead of sending a sandbox request to production. Ask Fiuu support for yours and set `FIUU_SANDBOX_CARD_URL` and `FIUU_SANDBOX_RECURRING_URL`.
+
+## Upgrading to 1.1
+
+Publish and run the new migration, which adds `parent_id` to the transactions table:
+
+```bash
+php artisan vendor:publish --tag="cashier-fiuu-migrations" --force
+php artisan migrate
+```
+
+Two behaviour changes worth knowing:
+
+- `$transaction->refund()` and `$user->refund()` now return the `Transaction` they refunded rather than Fiuu's raw response array. Read the refund itself from `$transaction->refunds`.
+- `refunded_amount` is now derived from refund rows. A transaction refunded under 1.0 has an amount but no rows, so its next refund recalculates from zero. Refund those through the merchant portal instead, or backfill a refund row for them.
+
+Payments now expire: a pending payment older than `FIUU_ABANDON_AFTER` minutes (a day by default) is written off as failed, rather than being requeried forever.
 
 ## Notes and limitations
 

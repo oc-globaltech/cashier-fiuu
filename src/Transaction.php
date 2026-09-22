@@ -6,6 +6,7 @@ use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use OcGlobalTech\CashierFiuu\Exceptions\FiuuRequestFailed;
 
 /**
@@ -27,6 +28,9 @@ class Transaction extends Model
 
     /** The nominal charge taken to tokenize a card before a trial. */
     const TYPE_VERIFICATION = 'verification';
+
+    /** Money given back, recorded against the payment it came from. */
+    const TYPE_REFUND = 'refund';
 
     const STATUS_PENDING = 'pending';
 
@@ -53,6 +57,22 @@ class Transaction extends Model
             '22' => static::STATUS_PENDING,
             default => static::STATUS_FAILED,
         };
+    }
+
+    /**
+     * The payment this row refunds, if it is a refund.
+     */
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(static::class, 'parent_id');
+    }
+
+    /**
+     * The refunds taken out of this payment.
+     */
+    public function refunds(): HasMany
+    {
+        return $this->hasMany(static::class, 'parent_id');
     }
 
     public function owner(): BelongsTo
@@ -147,7 +167,7 @@ class Transaction extends Model
      *
      * @return array<string, mixed>
      */
-    public function refund(?int $amount = null): array
+    public function refund(?int $amount = null): static
     {
         if (! $this->fiuu_id) {
             throw new FiuuRequestFailed('Cannot refund a transaction that Fiuu never assigned an ID.');
@@ -157,19 +177,75 @@ class Transaction extends Model
 
         $fiuu = app(Fiuu::class);
 
+        // Fiuu settles refunds over days, so the refund is its own record and
+        // starts pending. Only once Fiuu says 'success' is the money gone.
+        $refund = $this->refunds()->create([
+            'user_id' => $this->user_id,
+            'subscription_id' => $this->subscription_id,
+            'order_id' => Cashier::orderId($this->owner ?? $this, 'rfd'),
+            'type' => static::TYPE_REFUND,
+            'status' => static::STATUS_PENDING,
+            'amount' => $amount,
+            'currency' => $this->currency,
+        ]);
+
         $result = $fiuu->refund(
             (string) $this->fiuu_id,
             $fiuu->formatAmount($amount),
-            Cashier::orderId($this->owner ?? $this, 'rfd')
+            (string) $refund->order_id
         );
 
         // Only '00' and '22' mean Fiuu took the refund; an error response
-        // carries no Status at all, so this has to be a positive check.
-        if (in_array($result['Status'] ?? null, ['00', '22'], true)) {
-            $this->forceFill(['refunded_amount' => $this->refunded_amount + $amount])->save();
+        // carries no Status at all, so this has to be a positive check. The
+        // signature is checked too, because accepting this reserves money.
+        if (! in_array($result['Status'] ?? null, ['00', '22'], true) || ! $fiuu->verifyRefund($result)) {
+            $refund->markAsFailed($result, $result['error_desc'] ?? 'Fiuu refused the refund.');
+        } else {
+            $refund->forceFill(['fiuu_id' => $result['RefundID'] ?? null, 'payload' => $result])->save();
+        }
+
+        return $this->syncRefundedAmount();
+    }
+
+    /**
+     * Ask Fiuu whether a refund has actually gone through.
+     *
+     * @return array<string, mixed>
+     */
+    public function refundStatus(): array
+    {
+        $result = app(Fiuu::class)->refundStatus((string) $this->order_id);
+
+        $status = match (strtolower((string) ($result['Status'] ?? ''))) {
+            'success' => static::STATUS_PAID,
+            'rejected' => static::STATUS_FAILED,
+            default => static::STATUS_PENDING,
+        };
+
+        if ($status !== $this->status) {
+            $status === static::STATUS_PAID
+                ? $this->markAsPaid($result)
+                : ($status === static::STATUS_FAILED ? $this->markAsFailed($result) : null);
+
+            $this->parent?->syncRefundedAmount();
         }
 
         return $result;
+    }
+
+    /**
+     * Recalculate how much of this payment has been given back.
+     *
+     * A rejected refund must stop counting, so this is derived from the
+     * refund rows rather than accumulated as they are requested.
+     */
+    public function syncRefundedAmount(): static
+    {
+        $this->forceFill([
+            'refunded_amount' => (int) $this->refunds()->where('status', '!=', static::STATUS_FAILED)->sum('amount'),
+        ])->save();
+
+        return $this;
     }
 
     /**
@@ -181,6 +257,29 @@ class Transaction extends Model
     }
 
     /**
+     * Save the card Fiuu tokenized for this payment.
+     *
+     * Both the webhook and a requery can be the first to learn of a token, so
+     * they share this. Fiuu only ever hands one over once.
+     *
+     * @param  array<string, mixed>  $card
+     */
+    public function storeToken(array $card): void
+    {
+        if (empty($card['token'])) {
+            return;
+        }
+
+        $owner = $this->owner;
+
+        if ($owner && method_exists($owner, 'updateDefaultPaymentMethodFromExtraP')) {
+            $owner->updateDefaultPaymentMethodFromExtraP($card);
+        }
+
+        $this->subscription?->forceFill(['fiuu_token' => $card['token']])->save();
+    }
+
+    /**
      * Ask Fiuu for the authoritative status of this transaction.
      *
      * @return array<string, mixed>
@@ -189,7 +288,21 @@ class Transaction extends Model
     {
         $fiuu = app(Fiuu::class);
 
-        return $fiuu->requery((string) $this->fiuu_id, $fiuu->formatAmount($this->amount));
+        $amount = $fiuu->formatAmount($this->amount);
+
+        // A payment that never reported back has no transaction ID, so the
+        // order ID is the only handle we have left on it.
+        $byOrderId = ! $this->fiuu_id;
+
+        $result = $byOrderId
+            ? $fiuu->queryByOrderId((string) $this->order_id, $amount)
+            : $fiuu->requery((string) $this->fiuu_id, $amount);
+
+        if (! $fiuu->verifyRequery($result, $byOrderId)) {
+            throw FiuuRequestFailed::unverifiable((string) $this->order_id);
+        }
+
+        return $result;
     }
 
     public function amount(): string

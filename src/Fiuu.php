@@ -2,6 +2,7 @@
 
 namespace OcGlobalTech\CashierFiuu;
 
+use Carbon\Carbon;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use OcGlobalTech\CashierFiuu\Exceptions\FiuuRequestFailed;
@@ -145,6 +146,29 @@ class Fiuu
             'domain' => $this->merchantId(),
             'skey' => md5($transactionId.$this->merchantId().$this->verifyKey().$amount),
             'type' => 2,
+            'req4token' => 1,
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Ask Fiuu what became of an order.
+     *
+     * Used when a payment was started but never confirmed, which leaves us
+     * without the transaction ID that requery() needs.
+     *
+     * @return array<string, mixed>
+     */
+    public function queryByOrderId(string $orderId, string $amount): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/query/q_by_oid.php', [
+            'amount' => $amount,
+            'oID' => $orderId,
+            'domain' => $this->merchantId(),
+            'skey' => md5($orderId.$this->merchantId().$this->verifyKey().$amount),
+            'type' => 2,
+            'req4token' => 1,
         ]);
 
         return $this->decode($response);
@@ -153,9 +177,12 @@ class Fiuu
     /**
      * Confirm that a requery result was really produced by Fiuu.
      *
+     * Fiuu signs a transaction ID lookup with the transaction ID and an order
+     * ID lookup with the order ID, so the caller has to say which it ran.
+     *
      * @param  array<string, mixed>  $result
      */
-    public function verifyRequery(array $result): bool
+    public function verifyRequery(array $result, bool $byOrderId = false): bool
     {
         $signature = $result['VrfKey'] ?? null;
 
@@ -163,9 +190,13 @@ class Fiuu
             return false;
         }
 
+        $reference = $byOrderId
+            ? ($result['OrderID'] ?? '')
+            : ($result['TranID'] ?? '');
+
         $expected = md5(
             ($result['Amount'] ?? '').$this->secretKey().($result['Domain'] ?? '').
-            ($result['TranID'] ?? '').($result['StatCode'] ?? '')
+            $reference.($result['StatCode'] ?? '')
         );
 
         return hash_equals($expected, $signature);
@@ -187,6 +218,50 @@ class Fiuu
             'Amount' => $amount,
             'Signature' => md5('P'.$this->merchantId().$reference.$transactionId.$amount.$this->secretKey()),
         ], $options));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Confirm that a refund response was really produced by Fiuu.
+     *
+     * Spec: md5( {RefundType}{MerchantID}{RefID}{RefundID}{TxnID}{Amount}{Status}{secret_key} )
+     *
+     * @param  array<string, mixed>  $result
+     */
+    public function verifyRefund(array $result): bool
+    {
+        $signature = $result['Signature'] ?? null;
+
+        if (! is_string($signature) || $signature === '') {
+            return false;
+        }
+
+        $get = fn (string $field) => (string) ($result[$field] ?? '');
+
+        $expected = md5(
+            $get('RefundType').$this->merchantId().$get('RefID').$get('RefundID').
+            $get('TxnID').$get('Amount').$get('Status').$this->secretKey()
+        );
+
+        return hash_equals($expected, $signature);
+    }
+
+    /**
+     * Ask Fiuu what became of a refund request.
+     *
+     * Looked up by the reference we sent, because that is the only handle we
+     * are guaranteed to have: a refused request never returns a RefundID.
+     *
+     * @return array<string, mixed>
+     */
+    public function refundStatus(string $reference): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/refundAPI/q_by_refID.php', [
+            'RefID' => $reference,
+            'MerchantID' => $this->merchantId(),
+            'Signature' => md5($reference.$this->merchantId().$this->verifyKey()),
+        ]);
 
         return $this->decode($response);
     }
@@ -222,6 +297,258 @@ class Fiuu
             'skey' => md5($transactionId.$amount.$this->merchantId().$this->verifyKey()),
             'type' => 2,
         ]);
+
+        return $this->decode($response);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Merchant APIs
+    |--------------------------------------------------------------------------
+    |
+    | The rest of Fiuu's surface: everything here answers a question rather
+    | than moving money, and every one of them signs differently.
+    |
+    */
+
+    /**
+     * Which payment channels are currently enabled and up for this merchant.
+     *
+     * Served from the payment host rather than the API host.
+     *
+     * @return array<string, mixed>
+     */
+    public function channels(?string $datetime = null): array
+    {
+        $datetime ??= Carbon::now()->format('YmdHis');
+
+        $response = Http::asForm()->post(rtrim($this->payUrl(), '/').'/RMS/API/chkstat/channel_status.php', [
+            'merchantID' => $this->merchantId(),
+            'datetime' => $datetime,
+            'skey' => hash_hmac('sha256', $datetime.$this->merchantId(), $this->verifyKey()),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The recent success rate of each channel, as a percentage.
+     *
+     * @return array<string, mixed>
+     */
+    public function channelSuccessRate(string $type = 'Merchant', ?string $datetime = null): array
+    {
+        $datetime ??= Carbon::now()->format('YmdHis');
+
+        $response = Http::get($this->apiUrl().'/RMS/API/chkstat/OK-rate.php', [
+            'domain' => $this->merchantId(),
+            'reqTime' => $datetime,
+            'reqType' => $type,
+            'skey' => md5($this->merchantId().$this->secretKey().$datetime.$type),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The merchant's settled balance, and optionally its sub merchants'.
+     *
+     * @param  array<int, string>  $subMerchants
+     * @return array<string, mixed>
+     */
+    public function balance(array $subMerchants = [], ?string $datetime = null): array
+    {
+        $datetime ??= Carbon::now()->format('Y-m-d H:i:s');
+
+        // The spec calls submerchants an "array object" without showing how it
+        // is folded into the hash. Unverified: omitted contributes nothing.
+        $joined = implode('', $subMerchants);
+
+        $response = Http::get($this->apiUrl().'/RMS/API/chkstat/account_balance.php', array_filter([
+            'merchantID' => $this->merchantId(),
+            'datetime' => $datetime,
+            'submerchants' => $subMerchants ?: null,
+            'skey' => hash_hmac('sha256', $datetime.$this->merchantId().$joined, $this->verifyKey()),
+        ]));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * What Fiuu knows about a card from its first six digits.
+     *
+     * @return array<string, mixed>
+     */
+    public function binInfo(string $bin): array
+    {
+        $response = Http::get($this->apiUrl().'/RMS/query/q_BINinfo.php', [
+            'domain' => $this->merchantId(),
+            'BIN' => $bin,
+            'skey' => md5($this->merchantId().$this->secretKey().$bin),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Today's exchange rates against the ringgit.
+     *
+     * @return array<string, mixed>
+     */
+    public function fxRates(?int $source = null, ?string $date = null): array
+    {
+        $date ??= Carbon::now()->format('Ymd');
+
+        $response = Http::get($this->apiUrl().'/RMS/query/q_fx_rate.php', array_filter([
+            'domain' => $this->merchantId(),
+            'reqtime' => $date,
+            'source' => $source,
+            'skey' => md5($this->merchantId().$this->verifyKey().$date),
+        ]));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The recurring plans defined in the merchant portal.
+     *
+     * @return array<string, mixed>
+     */
+    public function recurringPlans(?string $chargeOnEndOfMonth = null, ?string $period = null, ?string $cycleTerm = null, ?string $status = null): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/Recurring/get_plans.php', array_filter([
+            'domain' => $this->merchantId(),
+            'charge_on_endofmonth' => $chargeOnEndOfMonth,
+            'period' => $period,
+            'cycle_term' => $cycleTerm,
+            'status' => $status,
+            'skey' => md5($this->merchantId().$this->secretKey().$chargeOnEndOfMonth.$period.$cycleTerm.$status),
+        ], fn ($value) => $value !== null));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The settlement report for one day, for end of day reconciliation.
+     *
+     * @return array<string, mixed>
+     */
+    public function settlementReport(string $date, array $options = []): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/settlement/report.php', array_merge([
+            'merchantID' => $this->merchantId(),
+            'rdate' => $date,
+            'skey' => md5($date.$this->merchantId().$this->secretKey()),
+            'response_type' => 'json',
+        ], $options));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Transactions held back from a settlement batch because they were voided.
+     *
+     * @return array<string, mixed>
+     */
+    public function refundReport(string $date, array $options = []): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/settlement/report_refund.php', array_merge([
+            'merchantID' => $this->merchantId(),
+            'date' => $date,
+            'token' => md5($this->merchantId().$this->verifyKey().$date),
+            'response_type' => 'json',
+        ], $options));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The state of several orders at once.
+     *
+     * Bulk lookups only reach back 24 hours, so this is for sweeping today's
+     * unknowns, not for chasing an old payment.
+     *
+     * @param  array<int, string>  $orderIds
+     * @return array<string, mixed>
+     */
+    public function queryByOrderIds(array $orderIds, string $delimiter = '|'): array
+    {
+        $ids = implode($delimiter, $orderIds);
+
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/query/q_by_oids.php', [
+            'oIDs' => $ids,
+            'delimiter' => $delimiter,
+            'domain' => $this->merchantId(),
+            'skey' => md5($this->merchantId().$ids.$this->verifyKey()),
+            'type' => 2,
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Create a QR code for a payment the customer scans to complete.
+     *
+     * @param  array<string, mixed>  $order
+     * @return array<string, mixed>
+     */
+    public function staticQr(string $channel, string $orderId, string $amount, array $order = []): array
+    {
+        $currency = $order['currency'] ?? (string) $this->config('currency');
+
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/staticqr/index.php', array_merge([
+            'merchantID' => $this->merchantId(),
+            'channel' => $channel,
+            'orderid' => $orderId,
+            'currency' => $currency,
+            'amount' => $amount,
+            'checksum' => md5($this->merchantId().$channel.$orderId.$currency.$amount.$this->verifyKey()),
+        ], $order));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Cancel a cash payment order before the customer has paid it.
+     *
+     * @return array<string, mixed>
+     */
+    public function voidPendingCash(string $transactionId, string $amount): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/VoidPendingCash/index.php', [
+            'tranID' => $transactionId,
+            'amount' => $amount,
+            'merchantID' => $this->merchantId(),
+            'checksum' => md5($transactionId.$amount.$this->merchantId().$this->verifyKey()),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Check a stored card token is still live, without charging it.
+     *
+     * Fiuu's zero dollar verification also accepts a raw card number, which
+     * this deliberately does not: handling a PAN would put the application
+     * inside PCI scope. Pass a token Fiuu already issued.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    public function verifyCard(string $token, string $reference, string $expiryMonth, string $expiryYear, array $options = []): array
+    {
+        $currency = $options['TxnCurrency'] ?? (string) $this->config('currency');
+
+        $response = Http::asForm()->post(rtrim($this->cardUrl(), '/').'/RMS/API/Card/cc_verification.php', array_merge([
+            'MerchantID' => $this->merchantId(),
+            'TxnChannel' => $options['TxnChannel'] ?? 'CREDITAN',
+            'ReferenceNo' => $reference,
+            'TxnCurrency' => $currency,
+            'CC_TOKEN' => $token,
+            'CC_MONTH' => $expiryMonth,
+            'CC_YEAR' => $expiryYear,
+            'Signature' => hash_hmac('sha256', $currency.$this->merchantId().$reference, $this->verifyKey()),
+        ], $options));
 
         return $this->decode($response);
     }
@@ -282,6 +609,16 @@ class Fiuu
         // sandbox charge to production, refuse until the host is configured.
         return (string) ($this->config('sandbox_recurring_url')
             ?: throw new FiuuRequestFailed('Set cashier.sandbox_recurring_url before sending recurring charges in sandbox mode. Ask Fiuu support for the host.'));
+    }
+
+    public function cardUrl(): string
+    {
+        if (! $this->sandbox()) {
+            return (string) $this->config('card_url');
+        }
+
+        return (string) ($this->config('sandbox_card_url')
+            ?: throw new FiuuRequestFailed('Set cashier.sandbox_card_url before calling the Card APIs in sandbox mode. Ask Fiuu support for the host.'));
     }
 
     public function sandbox(): bool
