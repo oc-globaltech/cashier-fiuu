@@ -31,8 +31,47 @@ For sandbox testing you must also whitelist your environment's IP address in the
 
 ## Installation
 
+Cashier Fiuu requires PHP 8.1 or higher and Laravel 10, 11, 12 or 13.
+
+The package is hosted in a private repository, so Composer has to be told where
+to find it. Add the repository to your application's `composer.json`:
+
+```json
+{
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/oc-globaltech/cashier-fiuu.git",
+            "no-api": true
+        }
+    ],
+    "config": {
+        "preferred-install": {
+            "oc-globaltech/*": "source"
+        }
+    }
+}
+```
+
+Then require the package:
+
 ```bash
-composer require oc-globaltech/cashier-fiuu
+composer require oc-globaltech/cashier-fiuu:^1.0
+```
+
+`no-api` and `preferred-install` are both needed for a private repository:
+without them Composer asks GitHub's API for a dist archive, which answers 404
+unless the request is authenticated. Together they make Composer clone over
+HTTPS with plain git, which reuses the credentials you already use to push.
+
+You need read access to the repository. Locally that means the credential
+helper behind your ordinary `git clone`; if you authenticate with SSH instead,
+use `git@github.com:oc-globaltech/cashier-fiuu.git` as the URL. On CI, where
+neither exists, pass a token with read-only access to the repository:
+
+```yaml
+env:
+  COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.COMPOSER_TOKEN }}"}}'
 ```
 
 Publish and run the migrations:
