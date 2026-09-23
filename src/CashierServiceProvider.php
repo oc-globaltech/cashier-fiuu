@@ -5,6 +5,8 @@ namespace OcGlobalTech\CashierFiuu;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use OcGlobalTech\CashierFiuu\Console\ChargeRenewalsCommand;
+use OcGlobalTech\CashierFiuu\Console\CheckCommand;
+use OcGlobalTech\CashierFiuu\Http\Middleware\Subscribed;
 
 class CashierServiceProvider extends ServiceProvider
 {
@@ -18,6 +20,7 @@ class CashierServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerRoutes();
+        $this->registerMiddleware();
         $this->registerMigrations();
         $this->registerPublishing();
         $this->registerCommands();
@@ -36,6 +39,11 @@ class CashierServiceProvider extends ServiceProvider
         Route::group([], function () {
             $this->loadRoutesFrom(__DIR__.'/../routes/web.php');
         });
+    }
+
+    protected function registerMiddleware(): void
+    {
+        Route::aliasMiddleware('subscribed', Subscribed::class);
     }
 
     protected function registerMigrations(): void
@@ -63,7 +71,7 @@ class CashierServiceProvider extends ServiceProvider
     protected function registerCommands(): void
     {
         if ($this->app->runningInConsole()) {
-            $this->commands([ChargeRenewalsCommand::class]);
+            $this->commands([ChargeRenewalsCommand::class, CheckCommand::class]);
         }
     }
 }

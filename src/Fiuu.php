@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use OcGlobalTech\CashierFiuu\Exceptions\FiuuRequestFailed;
+use OcGlobalTech\CashierFiuu\Exceptions\InvalidConfiguration;
 
 /**
  * The only class that speaks to Fiuu.
@@ -913,17 +914,34 @@ class Fiuu
 
     public function merchantId(): string
     {
-        return (string) $this->config('merchant_id');
+        return $this->required('merchant_id', 'FIUU_MERCHANT_ID');
     }
 
     public function verifyKey(): string
     {
-        return (string) $this->config('verify_key');
+        return $this->required('verify_key', 'FIUU_VERIFY_KEY');
     }
 
     public function secretKey(): string
     {
-        return (string) $this->config('secret_key');
+        return $this->required('secret_key', 'FIUU_SECRET_KEY');
+    }
+
+    /**
+     * Read a credential, refusing to sign anything without it.
+     *
+     * An empty key would otherwise be hashed in as an empty string, and the
+     * only symptom is Fiuu rejecting every request as tampered.
+     */
+    protected function required(string $key, string $env): string
+    {
+        $value = (string) $this->config($key);
+
+        if ($value === '') {
+            throw InvalidConfiguration::missing($key, $env);
+        }
+
+        return $value;
     }
 
     public function payUrl(): string

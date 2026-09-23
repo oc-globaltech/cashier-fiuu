@@ -77,7 +77,7 @@ class WebhookController extends Controller
             return $this->respond($payload, 404);
         }
 
-        if (! $this->fiuu->verifyNotification($payload, $this->keyFor($transaction))) {
+        if (! $this->fiuu->verifyNotification($payload, $transaction->notificationKey())) {
             $this->log('Fiuu notification failed signature verification.', $payload);
 
             // No acknowledgement: an unverified payload must not stop the retries.
@@ -159,19 +159,6 @@ class WebhookController extends Controller
         }
 
         return is_array($extraP) ? $extraP : [];
-    }
-
-    /**
-     * Which key signs this transaction's notification.
-     *
-     * Hosted payment callbacks are signed with the secret key; the Recurring
-     * API signs its own with the verify key, per its specification.
-     */
-    protected function keyFor(Transaction $transaction): string
-    {
-        return in_array($transaction->type, [Transaction::TYPE_RECURRING, Transaction::TYPE_CHARGE], true)
-            ? (string) config('cashier.recurring_callback_key', 'verify')
-            : 'secret';
     }
 
     protected function transaction(?string $orderId): ?Transaction

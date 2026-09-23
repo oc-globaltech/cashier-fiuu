@@ -37,6 +37,28 @@ class SubscriptionBuilder
         protected string $type,
         protected string $plan,
     ) {
+        $this->applyPlan(Cashier::plan($plan));
+    }
+
+    /**
+     * Seed the builder from a named plan in the config file.
+     *
+     * Everything here is a default: a fluent call made afterwards wins, so
+     * ->price() still overrides the configured amount.
+     *
+     * @param  array<string, mixed>  $plan
+     */
+    protected function applyPlan(array $plan): void
+    {
+        $this->amount = (int) ($plan['amount'] ?? $this->amount);
+        $this->currency = $plan['currency'] ?? $this->currency;
+        $this->interval = $plan['interval'] ?? $this->interval;
+        $this->intervalCount = max(1, (int) ($plan['interval_count'] ?? $this->intervalCount));
+        $this->quantity = max(1, (int) ($plan['quantity'] ?? $this->quantity));
+
+        if (isset($plan['trial_days'])) {
+            $this->trialDays((int) $plan['trial_days']);
+        }
     }
 
     /**

@@ -218,6 +218,19 @@ class Transaction extends Model
     }
 
     /**
+     * Which of the two keys signs this transaction's status notification.
+     *
+     * Hosted payment callbacks are signed with the secret key; the Recurring
+     * API signs its own with the verify key, per its specification.
+     */
+    public function notificationKey(): string
+    {
+        return in_array($this->type, [static::TYPE_RECURRING, static::TYPE_CHARGE], true)
+            ? (string) config('cashier.recurring_callback_key', 'verify')
+            : 'secret';
+    }
+
+    /**
      * Determine if this is money held on a card rather than taken from it.
      */
     public function authorized(): bool

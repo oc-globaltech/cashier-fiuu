@@ -4,6 +4,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Plans
+    |--------------------------------------------------------------------------
+    |
+    | Naming your prices here keeps them out of your controllers, so
+    | $user->newSubscription('default', 'pro')->checkout() is the whole call.
+    | Amounts are in minor units. A subscription copies these values when it
+    | is created, so changing a price here never reprices existing customers.
+    |
+    | 'pro' => [
+    |     'amount' => 4990,
+    |     'currency' => 'MYR',
+    |     'interval' => 'month',
+    |     'interval_count' => 1,
+    |     'trial_days' => 14,
+    | ],
+    |
+    */
+
+    'plans' => [
+        //
+    ],
+
+
+    /*
+    |--------------------------------------------------------------------------
     | Fiuu Credentials
     |--------------------------------------------------------------------------
     |
@@ -147,6 +172,13 @@ return [
     */
 
     'redirect_url' => env('CASHIER_REDIRECT_URL', '/'),
+
+    /*
+    | Where the 'subscribed' middleware sends a customer who has no active
+    | subscription for the route they asked for.
+    */
+
+    'subscribe_redirect' => env('CASHIER_SUBSCRIBE_REDIRECT', '/billing'),
 
     /*
     |--------------------------------------------------------------------------

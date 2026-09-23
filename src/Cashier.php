@@ -71,6 +71,44 @@ class Cashier
      * Fiuu allows 40 alphanumeric characters and rejects duplicates, so the
      * default prefixes a short random string with the transaction's purpose.
      */
+    /**
+     * Read a named plan from the cashier.plans config array.
+     *
+     * Plans are a convenience for the call site only. A subscription copies
+     * the amount and interval when it is created, so repricing a plan here
+     * never reprices the subscriptions already on it.
+     *
+     * @return array<string, mixed>
+     */
+    /**
+     * Swap Fiuu out for a fake that settles payments locally.
+     *
+     * Call this in a test and every outbound Fiuu call is intercepted, while
+     * settle() and fail() drive your own webhook route with correctly signed
+     * payloads. See the testing section of the readme.
+     */
+    public static function fake(): Testing\CashierFake
+    {
+        return app(Testing\CashierFake::class)->bind();
+    }
+
+    public static function plan(string $name): array
+    {
+        $plan = config("cashier.plans.{$name}");
+
+        if ($plan === null) {
+            return [];
+        }
+
+        if (! is_array($plan)) {
+            throw new \InvalidArgumentException(
+                "The cashier.plans.{$name} entry must be an array of plan attributes."
+            );
+        }
+
+        return $plan;
+    }
+
     public static function orderId(Model $owner, string $purpose = 'chg'): string
     {
         if (static::$orderIdGenerator) {

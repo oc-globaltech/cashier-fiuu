@@ -346,8 +346,14 @@ class Subscription extends Model
      *
      * @param  array<string, mixed>  $options
      */
-    public function swap(string $plan, int $amount, array $options = []): static
+    public function swap(string $plan, ?int $amount = null, array $options = []): static
     {
+        $options = array_merge(static::swapDefaults($plan), $options);
+
+        $amount ??= $options['amount'] ?? $this->amount;
+
+        unset($options['amount']);
+
         static::guardAgainstMinimum($amount, $options['currency'] ?? $this->currency);
 
         $this->forceFill(array_merge([
@@ -361,11 +367,24 @@ class Subscription extends Model
     /**
      * Swap the plan and charge the difference straight away.
      */
-    public function swapAndInvoice(string $plan, int $amount, array $options = []): Transaction
+    public function swapAndInvoice(string $plan, ?int $amount = null, array $options = []): Transaction
     {
         $this->swap($plan, $amount, $options);
 
         return $this->charge();
+    }
+
+    /**
+     * The columns a named plan changes when a subscription swaps onto it.
+     *
+     * @return array<string, mixed>
+     */
+    protected static function swapDefaults(string $plan): array
+    {
+        return array_intersect_key(
+            Cashier::plan($plan),
+            array_flip(['amount', 'currency', 'interval', 'interval_count', 'quantity'])
+        );
     }
 
     public function incrementQuantity(int $count = 1): static
