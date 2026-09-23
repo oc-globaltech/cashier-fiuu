@@ -32,6 +32,9 @@ class Transaction extends Model
     /** Money given back, recorded against the payment it came from. */
     const TYPE_REFUND = 'refund';
 
+    /** Money held on a card but not yet taken. Capture it to take it. */
+    const TYPE_AUTHORIZATION = 'authorization';
+
     const STATUS_PENDING = 'pending';
 
     const STATUS_PAID = 'paid';
@@ -158,6 +161,68 @@ class Transaction extends Model
         ])->save();
 
         return $this;
+    }
+
+    /**
+     * Take money that was only authorized.
+     *
+     * Fiuu allows capturing less than was held, but never more, and only
+     * inside the window its acquirer allows.
+     *
+     * @return array<string, mixed>
+     */
+    public function capture(?int $amount = null): array
+    {
+        if (! $this->fiuu_id) {
+            throw new FiuuRequestFailed('Cannot capture a transaction that Fiuu never assigned an ID.');
+        }
+
+        $amount ??= $this->amount;
+
+        $fiuu = app(Fiuu::class);
+
+        $result = $fiuu->capture((string) $this->fiuu_id, $fiuu->formatAmount($amount));
+
+        if (($result['StatCode'] ?? null) === '00') {
+            $this->forceFill([
+                'type' => static::TYPE_CHARGE,
+                'amount' => $amount,
+                'payload' => $result,
+            ])->save();
+        }
+
+        return $result;
+    }
+
+    /**
+     * Cancel a payment outright, rather than refunding it.
+     *
+     * Fiuu only allows this on the day the transaction was created; after
+     * that it is a refund.
+     *
+     * @return array<string, mixed>
+     */
+    public function void(): array
+    {
+        if (! $this->fiuu_id) {
+            throw new FiuuRequestFailed('Cannot void a transaction that Fiuu never assigned an ID.');
+        }
+
+        $result = app(Fiuu::class)->reverse((string) $this->fiuu_id);
+
+        if (($result['StatCode'] ?? null) === '00') {
+            $this->markAsFailed($result, 'Voided.');
+        }
+
+        return $result;
+    }
+
+    /**
+     * Determine if this is money held on a card rather than taken from it.
+     */
+    public function authorized(): bool
+    {
+        return $this->type === static::TYPE_AUTHORIZATION;
     }
 
     /**

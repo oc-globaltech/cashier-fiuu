@@ -225,10 +225,11 @@ You cannot add one directly. Send the customer through a checkout; the token arr
 ### Deleting a payment method
 
 ```php
-$user->deletePaymentMethod();
+$user->deletePaymentMethod();   // forget it here
+$user->revokePaymentMethod();   // withdraw it at Fiuu, then forget it
 ```
 
-Fiuu offers no API to revoke a token, so this only stops your application from charging it.
+`deletePaymentMethod()` only stops your application charging the token; it stays valid at Fiuu. When a customer asks you to remove their card, use `revokePaymentMethod()`, which deletes the token through Fiuu's Token API first.
 
 ## Subscriptions
 
@@ -453,7 +454,41 @@ For a customer with no token, or for a channel other than card:
 return $user->checkout(5000, ['bill_desc' => 'Annual conference ticket']);
 ```
 
-Any extra option is passed through to Fiuu's payment page as a request parameter.
+Any extra option is passed through to Fiuu's payment page as a request parameter. The ones worth knowing have methods of their own:
+
+```php
+return $user->checkout(5000)
+    ->channel('credit')          // open straight onto one payment channel
+    ->saveCard()                 // tick "save this card" for them; 'force' locks it ticked
+    ->installments(12)           // offer the amount as a 12 month plan
+    ->language('cn')             // 'en' or 'cn'
+    ->country('MY')
+    ->cancelUrl(route('cart'))   // where to send them if they abandon the page
+    ->hideSavedCards()           // do not offer cards they have saved before
+    ->escrow();                  // hold the payment in escrow
+```
+
+No saved card means no token, and no token means no recurring billing, so `saveCard()` matters on any checkout you intend to renew.
+
+### Authorizing without charging
+
+Fiuu can hold an amount on a card and take it later:
+
+```php
+$checkout = $user->authorize(5000);
+```
+
+The transaction is recorded as an authorization rather than a payment, because the money has not moved. Take it when you are ready to:
+
+```php
+$transaction->capture();        // take the whole amount held
+$transaction->capture(3000);    // or less; never more
+$transaction->void();           // release it instead
+```
+
+Capturing turns the row into an ordinary charge, for the amount actually taken. `authorized()` tells the two apart, and `void()` also works on a payment you want to cancel outright — Fiuu allows that only on the day it was made, and it is a refund after that.
+
+Tell Fiuu before you start using pre-authorization; they enable it per merchant.
 
 ### Refunding charges
 
@@ -542,32 +577,100 @@ composer test
 
 ## The Fiuu API
 
-Cashier wraps the endpoints it needs. The rest of Fiuu's API is on the client, reached through `Cashier::fiuu()`, and every method returns Fiuu's response as an array:
+Cashier wraps the endpoints it needs to bill. Every other endpoint Fiuu publishes is on the client, reached through `Cashier::fiuu()`, and each returns Fiuu's response as an array.
 
 ```php
 use OcGlobalTech\CashierFiuu\Cashier;
-
-Cashier::fiuu()->channels();                       // which channels are enabled and up
-Cashier::fiuu()->channelSuccessRate();             // recent success rate per channel
-Cashier::fiuu()->balance();                        // settled merchant balance
-Cashier::fiuu()->fxRates();                        // exchange rates against the ringgit
-Cashier::fiuu()->binInfo('519603');                // brand, bank and country behind a card
-Cashier::fiuu()->recurringPlans();                 // plans defined in the merchant portal
-Cashier::fiuu()->settlementReport('2024-01-01');   // end of day reconciliation
-Cashier::fiuu()->refundReport('2024-01-01');       // transactions held back from a batch
-Cashier::fiuu()->queryByOrderIds(['ord-1']);       // bulk status, last 24 hours only
-Cashier::fiuu()->staticQr('DuitNowSQR', 'ord-1', '50.00');
-Cashier::fiuu()->voidPendingCash('77001', '50.00');
-Cashier::fiuu()->verifyCard('tok_1', 'ref-1', '12', '2030');
 ```
 
-`verifyCard()` is Fiuu's zero dollar verification, restricted here to a token Fiuu already issued: it tells you whether a stored card is still live without charging it. It deliberately will not take a raw card number, which would put your application in PCI scope.
+### Status and reconciliation
 
-Rate limits are Fiuu's, not Cashier's, and they are low. The status queries allow between 5 and 30 requests per second and Fiuu blocks excessive callers without warning, so schedule reports and bulk queries rather than calling them per request.
+```php
+Cashier::fiuu()->requery('77001', '50.00');           // one payment, by transaction ID
+Cashier::fiuu()->queryByOrderId('ord-1', '50.00');    // one payment, by order ID
+Cashier::fiuu()->queryOrderAttempts('ord-1');         // every attempt on one order
+Cashier::fiuu()->queryByOrderIds(['ord-1']);          // bulk, last 24 hours
+Cashier::fiuu()->queryByTransactionIds(['77001']);    // bulk, last 30 days
+Cashier::fiuu()->queryMaster('77001');                // a sub merchant's payment
+Cashier::fiuu()->gateQuery('77001', '50.00');         // the gateway's own view
+Cashier::fiuu()->dailyReport('2024-01-01');           // every transaction in a window
+Cashier::fiuu()->settlementReport('2024-01-01');      // end of day settlement
+Cashier::fiuu()->refundReport('2024-01-01');          // held back from a batch
+Cashier::fiuu()->requestNotification($payload);       // ask Fiuu to resend a notification
+```
+
+Each lookup reaches back a different distance: 180 days by transaction ID, 7 days by order ID, 30 days for bulk transaction IDs, and only 24 hours for bulk order IDs or the gateway query. Rate limits run from 5 to 30 requests per second and Fiuu blocks excessive callers without warning, so schedule these rather than calling them per request.
+
+### Merchant information
+
+```php
+Cashier::fiuu()->channels();              // which channels are enabled and up
+Cashier::fiuu()->channelSuccessRate();    // recent success rate per channel
+Cashier::fiuu()->balance();               // settled merchant balance
+Cashier::fiuu()->fxRates();               // exchange rates against the ringgit
+Cashier::fiuu()->binInfo('519603');       // brand, bank and country behind a card
+Cashier::fiuu()->recurringPlans();        // plans defined in the merchant portal
+```
+
+### Money
+
+```php
+Cashier::fiuu()->refundStatusByTransaction('77001');       // every refund on a payment
+Cashier::fiuu()->staticQr('DuitNowSQR', 'ord-1', '50.00'); // a QR code to scan and pay
+Cashier::fiuu()->voidPendingCash('77001', '50.00');        // cancel an unpaid cash order
+Cashier::fiuu()->voidPendingNonCash('ref-1', 'FPX', '50.00');
+```
+
+### Cards
+
+```php
+Cashier::fiuu()->verifyCard('tok_1', 'ref-1', '12', '2030');
+Cashier::fiuu()->authenticateCard('ref-1', '50.00', $returnUrl);  // run 3-D Secure
+Cashier::fiuu()->authenticationStatus('auth-9');                  // and read its result
+```
+
+`verifyCard()` is Fiuu's zero dollar verification: it says whether a stored card is still live without charging it.
+
+### Tokens
+
+Fiuu's Token API manages stored cards directly, and Cashier exposes all five actions:
+
+```php
+$buyer = ['id' => $user->id, 'name' => 'Ali', 'email' => 'ali@example.com', 'mobile' => '0163331111'];
+
+Cashier::fiuu()->retrieveToken($buyer);              // find the token Fiuu holds for a buyer
+Cashier::fiuu()->tokenDetails('tok_1');              // the buyer behind a token
+Cashier::fiuu()->updateToken('tok_1', $buyer);       // change those details
+Cashier::fiuu()->deleteToken('tok_1', $buyer);       // revoke it
+Cashier::fiuu()->tokenize($buyer, $encryptedCard);   // create one outright
+```
+
+Most applications want `$user->revokePaymentMethod()` rather than `deleteToken()` directly; it does the same thing and forgets the token locally too.
+
+### What Cashier will not do for you
+
+Three of Fiuu's endpoints want the card number itself: `tokenize()` and `installmentTenures()` take it as a blob encrypted with Fiuu's RSA public key, and Fiuu's direct server payment API takes it outright. Cashier will pass an encrypted value you have prepared, but it will never build one, and it has no method that accepts a plain card number.
+
+This is not squeamishness. A card number reaching your servers puts your application inside PCI DSS scope, which is a compliance programme, not a library feature. Take cards on Fiuu's hosted page and you stay outside it, which is why `checkout()` is the only way this package starts a first payment.
 
 ### Hosts
 
-The Card APIs and the recurring endpoint are still served from the legacy Razer host, and channel status comes from the payment host rather than the API host. Fiuu publishes no sandbox host for the Card or recurring endpoints, so Cashier throws instead of sending a sandbox request to production. Ask Fiuu support for yours and set `FIUU_SANDBOX_CARD_URL` and `FIUU_SANDBOX_RECURRING_URL`.
+Fiuu serves its API from four hosts, and Cashier routes each call to the right one: the API host for lookups, the payment host for channel status and tokens, and two legacy Razer hosts for the Card APIs and recurring charges. Fiuu publishes no sandbox equivalent for the Card or recurring hosts, so Cashier throws rather than send a sandbox request to production. Ask Fiuu support for yours:
+
+```ini
+FIUU_SANDBOX_RECURRING_URL=
+FIUU_SANDBOX_CARD_URL=
+FIUU_SANDBOX_CARD_API_URL=
+```
+
+## Upgrading to 1.2
+
+Nothing to migrate and nothing breaking: 1.2 only adds. Worth knowing:
+
+- Every endpoint Fiuu publishes is now reachable through `Cashier::fiuu()`, bar the three that want a raw card number.
+- `$user->revokePaymentMethod()` withdraws a token at Fiuu. The README previously said no such API existed; it does.
+- `$user->authorize()` holds money without taking it, and `$transaction->capture()` takes it.
+- Payment page options such as `saveCard()`, `installments()` and `language()` have methods on `Checkout`.
 
 ## Upgrading to 1.1
 
@@ -592,7 +695,9 @@ Payments now expire: a pending payment older than `FIUU_ABANDON_AFTER` minutes (
 - **Recurring callbacks are signed with the verify key**, per the Recurring API specification, while hosted payment callbacks are signed with the secret key. If your account signs recurring callbacks with the secret key instead, set `FIUU_RECURRING_CALLBACK_KEY=secret`.
 - **DirectDebit e-mandates are processed in batches**, twice per working day, with results arriving the next working day. Set `FIUU_RECORD_TYPE=E` to use them and expect the delay.
 - **No coupons, tax handling, metered billing, multi-price subscriptions, proration or PDF invoices.** None of these exist in Fiuu's API; building them would mean building a second billing system on top of this one.
-- **No SCA handling.** 3D Secure happens on Fiuu's hosted page, before your application is involved.
+- **No SCA handling in the billing flow.** 3-D Secure happens on Fiuu's hosted page, before your application is involved. `Cashier::fiuu()->authenticateCard()` exposes Fiuu's standalone 3-D Secure API if you need to run it yourself.
+- **Cashier never touches a card number.** Fiuu's direct server payment API, `tokenize()` and `installmentTenures()` all want one, so the first two take an already encrypted blob and the third is not wrapped at all. See "What Cashier will not do for you".
+- **Fiuu's legacy recurring endpoint (`Recurring/input.php`) is not wrapped**; the v7 endpoint supersedes it. Nor is `query/vcode.php`, which is a checksum calculator for developers rather than a payment API.
 
 ## License
 

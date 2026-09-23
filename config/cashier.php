@@ -64,6 +64,11 @@ return [
 
     'sandbox_card_url' => env('FIUU_SANDBOX_CARD_URL'),
 
+    // Card requests go to the pay host, card lookups to the api host.
+    'card_api_url' => env('FIUU_CARD_API_URL', 'https://api.merchant.razer.com'),
+
+    'sandbox_card_api_url' => env('FIUU_SANDBOX_CARD_API_URL'),
+
     /*
     |--------------------------------------------------------------------------
     | Extended vcode

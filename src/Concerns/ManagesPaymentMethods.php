@@ -2,6 +2,7 @@
 
 namespace OcGlobalTech\CashierFiuu\Concerns;
 
+use OcGlobalTech\CashierFiuu\Fiuu;
 use OcGlobalTech\CashierFiuu\PaymentMethod;
 
 trait ManagesPaymentMethods
@@ -40,10 +41,32 @@ trait ManagesPaymentMethods
     }
 
     /**
-     * Forget the stored card token.
+     * Revoke the card token at Fiuu, then forget it.
      *
-     * Fiuu has no API to revoke a token, so this only stops this application
-     * from charging it; the token itself stays valid on Fiuu's side.
+     * Use this rather than deletePaymentMethod() when a customer asks you to
+     * remove their card: it stops the token working anywhere, not just here.
+     *
+     * @return array<string, mixed>
+     */
+    public function revokePaymentMethod(): array
+    {
+        $result = app(Fiuu::class)->deleteToken((string) $this->fiuu_token, [
+            'id' => (string) $this->getKey(),
+            'name' => $this->fiuuName(),
+            'email' => $this->fiuuEmail(),
+            'mobile' => $this->fiuuPhone(),
+        ]);
+
+        $this->deletePaymentMethod();
+
+        return $result;
+    }
+
+    /**
+     * Forget the stored card token locally.
+     *
+     * This only stops this application from charging it; the token stays
+     * valid at Fiuu until revokePaymentMethod() withdraws it.
      */
     public function deletePaymentMethod(): void
     {

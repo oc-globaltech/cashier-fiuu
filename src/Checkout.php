@@ -49,6 +49,80 @@ class Checkout implements Responsable
     }
 
     /**
+     * Authorize the payment without taking the money.
+     *
+     * Capture it later with $transaction->capture(). Fiuu wants telling
+     * before a merchant starts using pre-authorization.
+     */
+    public function authorizeOnly(): static
+    {
+        return $this->withOptions(['tcctype' => 'AUTH']);
+    }
+
+    /**
+     * Tick the "save this card" box for the customer.
+     *
+     * Passing false leaves the choice to them; true ticks it, and 'force'
+     * ticks it in a way they cannot undo. No token, no recurring billing.
+     */
+    public function saveCard(bool|string $save = true): static
+    {
+        return $this->withOptions([
+            'token_status' => $save === 'force' ? 2 : ($save ? 1 : 0),
+        ]);
+    }
+
+    /**
+     * Offer the payment as an instalment plan over this many months.
+     */
+    public function installments(int $months): static
+    {
+        return $this->withOptions(['installmonth' => $months]);
+    }
+
+    /**
+     * Hide cards the customer has already saved with this merchant.
+     */
+    public function hideSavedCards(): static
+    {
+        return $this->withOptions(['hscl' => 1]);
+    }
+
+    /**
+     * The language the payment page is shown in: 'en' or 'cn'.
+     */
+    public function language(string $code): static
+    {
+        return $this->withOptions(['langcode' => $code]);
+    }
+
+    /**
+     * The buyer's country, as an ISO-3166 alpha-2 code.
+     */
+    public function country(string $code): static
+    {
+        return $this->withOptions(['country' => $code]);
+    }
+
+    /**
+     * Where to send a customer who abandons the page before paying.
+     *
+     * No transaction is created when they do, so nothing needs settling.
+     */
+    public function cancelUrl(string $url): static
+    {
+        return $this->withOptions(['cancelurl' => $url]);
+    }
+
+    /**
+     * Mark the payment as held in escrow.
+     */
+    public function escrow(): static
+    {
+        return $this->withOptions(['is_escrow' => 1]);
+    }
+
+    /**
      * @param  array<string, mixed>  $options
      */
     public function withOptions(array $options): static

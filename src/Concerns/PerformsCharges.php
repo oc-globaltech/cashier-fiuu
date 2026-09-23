@@ -88,7 +88,9 @@ trait PerformsCharges
 
         $transaction = $this->transactions()->create([
             'order_id' => $options['order_id'] ?? Cashier::orderId($this, 'chk'),
-            'type' => Transaction::TYPE_CHECKOUT,
+            'type' => ($options['tcctype'] ?? null) === 'AUTH'
+                ? Transaction::TYPE_AUTHORIZATION
+                : Transaction::TYPE_CHECKOUT,
             'status' => Transaction::STATUS_PENDING,
             'amount' => $amount,
             'currency' => $currency,
@@ -96,6 +98,19 @@ trait PerformsCharges
 
         return Checkout::make($this, $transaction, Arr::except($options, ['currency', 'order_id', 'channel']))
             ->channel($options['channel'] ?? config('cashier.channel'));
+    }
+
+    /**
+     * Hold an amount on a customer's card without taking it.
+     *
+     * The transaction is recorded as an authorization, not a payment, and
+     * becomes one when you capture it.
+     *
+     * @param  array<string, mixed>  $options
+     */
+    public function authorize(int $amount, array $options = []): Checkout
+    {
+        return $this->checkout($amount, $options + ['tcctype' => 'AUTH'])->authorizeOnly();
     }
 
     /**

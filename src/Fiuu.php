@@ -223,6 +223,22 @@ class Fiuu
     }
 
     /**
+     * Every refund taken out of one payment.
+     *
+     * @return array<string, mixed>
+     */
+    public function refundStatusByTransaction(string $transactionId): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/refundAPI/q_by_txn.php', [
+            'TxnID' => $transactionId,
+            'MerchantID' => $this->merchantId(),
+            'Signature' => md5($transactionId.$this->merchantId().$this->verifyKey()),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
      * Confirm that a refund response was really produced by Fiuu.
      *
      * Spec: md5( {RefundType}{MerchantID}{RefID}{RefundID}{TxnID}{Amount}{Status}{secret_key} )
@@ -554,6 +570,327 @@ class Fiuu
     }
 
     /**
+     * Have Fiuu tokenize a card without taking a payment for it.
+     *
+     * Fiuu enables this on request only. The card itself is passed in
+     * $detail, which Fiuu requires as base64 of an RSA encrypted JSON blob
+     * holding the number and expiry. Cashier never builds that: a card number
+     * passing through your application puts it inside PCI scope, so this is
+     * only for merchants who already handle cards and have the RSA key.
+     *
+     * @param  array<string, mixed>  $customer
+     * @return array<string, mixed>
+     */
+    public function tokenize(array $customer, string $detail, string $tokenType = 'T'): array
+    {
+        return $this->tokenRequest('ADD_TOKEN', $this->buyer($customer) + [
+            'detail' => $detail,
+            'token_type' => $tokenType,
+        ], 'verify');
+    }
+
+    /**
+     * Find the token Fiuu holds for a buyer.
+     *
+     * @param  array<string, mixed>  $customer
+     * @return array<string, mixed>
+     */
+    public function retrieveToken(array $customer, string $tokenType = 'T'): array
+    {
+        return $this->tokenRequest('GET_TOKEN', $this->buyer($customer) + [
+            'token_type' => $tokenType,
+        ], 'verify');
+    }
+
+    /**
+     * The buyer details Fiuu holds against a token.
+     *
+     * @return array<string, mixed>
+     */
+    public function tokenDetails(string $token): array
+    {
+        return $this->tokenRequest('GET_TOKEN_DETAILS', ['token' => $token], 'verify');
+    }
+
+    /**
+     * Change the buyer details, or the card, behind a token.
+     *
+     * @param  array<string, mixed>  $customer
+     * @return array<string, mixed>
+     */
+    public function updateToken(string $token, array $customer, string $detail = ''): array
+    {
+        return $this->tokenRequest('EDIT_TOKEN_DETAILS', $this->buyer($customer) + [
+            'detail' => $detail,
+            'token' => $token,
+        ], 'secret');
+    }
+
+    /**
+     * Revoke a token at Fiuu, so it can never be charged again.
+     *
+     * @param  array<string, mixed>  $customer
+     * @return array<string, mixed>
+     */
+    public function deleteToken(string $token, array $customer = []): array
+    {
+        return $this->tokenRequest('DELETE_TOKEN', $this->buyer($customer) + [
+            'token' => $token,
+        ], 'secret');
+    }
+
+    /**
+     * Send one Token API request.
+     *
+     * Every action signs its own fields in alphabetical order, so the payload
+     * is sorted rather than listed out five times.
+     *
+     * @param  array<string, mixed>  $fields
+     * @return array<string, mixed>
+     */
+    protected function tokenRequest(string $action, array $fields, string $key): array
+    {
+        $fields['action'] = $action;
+        $fields['merchantID'] = $this->merchantId();
+
+        ksort($fields);
+
+        $response = Http::asForm()->post(rtrim($this->payUrl(), '/').'/RMS/API/token/index.php', $fields + [
+            'signature' => hash_hmac('sha256', implode('', $fields), $this->key($key)),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The buyer fields every Token API action carries.
+     *
+     * @param  array<string, mixed>  $customer
+     * @return array<string, string>
+     */
+    protected function buyer(array $customer): array
+    {
+        return [
+            'billing_email' => (string) ($customer['email'] ?? ''),
+            'billing_mobile' => (string) ($customer['mobile'] ?? ''),
+            'billing_name' => (string) ($customer['name'] ?? ''),
+            'custID' => (string) ($customer['id'] ?? ''),
+        ];
+    }
+
+    /**
+     * Ask Fiuu to resend the notification for a payment.
+     *
+     * Echoing the return URL payload back with treq=1 is how a merchant tells
+     * Fiuu the browser made it back, and asks for the backend notification.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function requestNotification(array $payload): array
+    {
+        $response = Http::asForm()->post(
+            rtrim($this->payUrl(), '/').'/RMS/API/chkstat/returnipn.php',
+            $payload + ['treq' => 1]
+        );
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The gateway's own view of a transaction, for the last 24 hours.
+     *
+     * @return array<string, mixed>
+     */
+    public function gateQuery(string $transactionId, string $amount): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/gate-query/index.php', [
+            'amount' => $amount,
+            'txID' => $transactionId,
+            'domain' => $this->merchantId(),
+            'skey' => md5($transactionId.$this->merchantId().$this->verifyKey().$amount),
+            'type' => 2,
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Every transaction in a window, for daily reconciliation.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    public function dailyReport(string $date, array $options = []): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/PSQ/psq-daily.php', array_merge([
+            'merchantID' => $this->merchantId(),
+            'rdate' => $date,
+            'skey' => md5($date.$this->merchantId().$this->secretKey()),
+        ], $options));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The ten most recent payments against one order ID.
+     *
+     * Fiuu allows an order ID to be paid more than once, so this is how you
+     * see every attempt rather than a single answer.
+     *
+     * @return array<string, mixed>
+     */
+    public function queryOrderAttempts(string $orderId): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/query/q_oid_batch.php', [
+            'oID' => $orderId,
+            'domain' => $this->merchantId(),
+            'skey' => md5($orderId.$this->merchantId().$this->verifyKey()),
+            'type' => 2,
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The state of several transactions at once, over the last 30 days.
+     *
+     * @param  array<int, string>  $transactionIds
+     * @return array<string, mixed>
+     */
+    public function queryByTransactionIds(array $transactionIds, string $delimiter = '|'): array
+    {
+        $ids = implode($delimiter, $transactionIds);
+
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/query/q_by_tids.php', [
+            'tIDs' => $ids,
+            'delimiter' => $delimiter,
+            'domain' => $this->merchantId(),
+            'skey' => md5($this->merchantId().$ids.$this->verifyKey()),
+            'type' => 2,
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Look up a sub merchant's transaction from the master merchant account.
+     *
+     * @return array<string, mixed>
+     */
+    public function queryMaster(string $reference, bool $byOrderId = false): array
+    {
+        $endpoint = $byOrderId ? 'q4master_oid' : 'q4master_tid';
+
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/query/'.$endpoint.'.php', [
+            ($byOrderId ? 'oID' : 'txID') => $reference,
+            'domain' => $this->merchantId(),
+            'skey' => md5($reference.$this->merchantId().$this->verifyKey()),
+            'type' => 2,
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Cancel an unpaid non-cash order before it expires.
+     *
+     * @return array<string, mixed>
+     */
+    public function voidPendingNonCash(string $reference, string $channel, string $amount): array
+    {
+        $response = Http::asForm()->post($this->apiUrl().'/RMS/API/VoidPendingNonCash/index.php', [
+            'ReferenceNo' => $reference,
+            'TxnChannel' => $channel,
+            'TxnAmount' => $amount,
+            'MerchantID' => $this->merchantId(),
+            'Signature' => hash_hmac('sha256', $reference.$amount.$this->merchantId(), $this->verifyKey()),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Which instalment plans a card qualifies for at this amount.
+     *
+     * Fiuu wants the card number and expiry encrypted with its public key.
+     * Cashier does not build those either, for the same reason it does not
+     * build a token's detail blob: a card number in your application puts it
+     * inside PCI scope. Pass values you have already encrypted.
+     *
+     * @return array<string, mixed>
+     */
+    public function installmentTenures(string $pan, string $expiryMonth, string $expiryYear, string $amount, ?string $datetime = null): array
+    {
+        $datetime ??= Carbon::now()->format('YmdHis');
+
+        $response = Http::asForm()->post(rtrim($this->cardUrl(), '/').'/RMS/API/Installment/getEnableInstlChn.php', [
+            'MerchantID' => $this->merchantId(),
+            'CC_PAN' => $pan,
+            'CC_MONTH' => $expiryMonth,
+            'CC_YEAR' => $expiryYear,
+            'TxnAmt' => $amount,
+            'DateTime' => $datetime,
+            'Signature' => hash_hmac(
+                'sha256',
+                $this->merchantId().$pan.$expiryMonth.$expiryYear.$amount.$datetime,
+                $this->verifyKey()
+            ),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
+     * Run 3-D Secure on a payment before authorizing it.
+     *
+     * The card is entered on Fiuu's page, so this takes no card data. The
+     * response carries the URL to send the customer to.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    public function authenticateCard(string $reference, string $amount, string $returnUrl, array $options = []): array
+    {
+        $currency = $options['TxnCurrency'] ?? (string) $this->config('currency');
+
+        $response = Http::asForm()->post(rtrim($this->cardUrl(), '/').'/RMS/API/Card/authentication.php', array_merge([
+            'MerchantID' => $this->merchantId(),
+            'ReferenceNo' => $reference,
+            'TxnAmount' => $amount,
+            'TxnCurrency' => $currency,
+            'ReturnURL' => $returnUrl,
+            'Signature' => hash_hmac('sha256', $amount.$this->merchantId().$reference.$currency, $this->verifyKey()),
+        ], $options));
+
+        return $this->decode($response);
+    }
+
+    /**
+     * The result of an authentication that has already run.
+     *
+     * @return array<string, mixed>
+     */
+    public function authenticationStatus(?string $authenticationId = null, ?string $reference = null, ?string $datetime = null): array
+    {
+        $datetime ??= Carbon::now()->format('YmdHis');
+
+        $response = Http::asForm()->post(rtrim($this->cardApiUrl(), '/').'/RMS/API/Card/authn_query.php', [
+            'MerchantID' => $this->merchantId(),
+            'AuthenticationID' => (string) $authenticationId,
+            'ReferenceNo' => (string) $reference,
+            'DateTime' => $datetime,
+            'Signature' => hash_hmac(
+                'sha256',
+                $datetime.$this->merchantId().$authenticationId.$reference,
+                $this->verifyKey()
+            ),
+        ]);
+
+        return $this->decode($response);
+    }
+
+    /**
      * The hosted payment page URL for the given channel.
      */
     public function paymentUrl(?string $channel = null): string
@@ -619,6 +956,16 @@ class Fiuu
 
         return (string) ($this->config('sandbox_card_url')
             ?: throw new FiuuRequestFailed('Set cashier.sandbox_card_url before calling the Card APIs in sandbox mode. Ask Fiuu support for the host.'));
+    }
+
+    public function cardApiUrl(): string
+    {
+        if (! $this->sandbox()) {
+            return (string) $this->config('card_api_url');
+        }
+
+        return (string) ($this->config('sandbox_card_api_url')
+            ?: throw new FiuuRequestFailed('Set cashier.sandbox_card_api_url before calling the Card APIs in sandbox mode. Ask Fiuu support for the host.'));
     }
 
     public function sandbox(): bool
