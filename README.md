@@ -93,13 +93,14 @@ Cashier Fiuu follows semantic versioning. Releases are tagged `v1.1.0`, and each
 
 | Branch | Latest release | Laravel |
 | ------ | -------------- | ------- |
+| `1.2`  | `v1.2.0`       | 10 - 13 |
 | `1.1`  | `v1.1.0`       | 10 - 13 |
 | `1.0`  | `v1.0.1`       | 10 - 13 |
 
 Requiring `^1.0` picks up every 1.x release, which is what you want. Composer resolves from the tags, so the branch names only matter if you track unreleased work:
 
 ```bash
-composer require oc-globaltech/cashier-fiuu:dev-1.1
+composer require oc-globaltech/cashier-fiuu:dev-1.2
 ```
 
 That needs `"minimum-stability": "dev"` and `"prefer-stable": true` in your application, and it moves under you. Pin a tag for anything you deploy.
