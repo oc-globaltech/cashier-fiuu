@@ -674,6 +674,11 @@ $transaction = $subscription->charge();
 $this->assertTrue($transaction->failed());
 ```
 
+Settle a renewal before running `cashier:renew` again: the fake answers the
+recurring endpoint but not the requery endpoints, so a renewal left pending is
+reconciled on the next run and logged as unverifiable. It is noise rather than
+a failure, but it is confusing noise.
+
 `Cashier::fake()` is additive: it only stubs the Fiuu hosts, so your own
 `Http::fake()` calls for other services keep working. Calling it twice returns
 the same instance rather than a second, inert one.
