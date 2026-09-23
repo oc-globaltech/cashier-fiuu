@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use OcGlobalTech\CashierFiuu\Fiuu;
+use RuntimeException;
 use OcGlobalTech\CashierFiuu\Transaction;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -20,8 +21,7 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class CashierFake
 {
-    /** The Fiuu hosts this fake answers for. Everything else is left alone. */
-    const HOSTS = ['*fiuu.com/*', '*razer.com/*', '*merchant.razer.com/*'];
+    protected bool $bound = false;
 
     protected bool $refuseRecurring = false;
 
@@ -36,11 +36,39 @@ class CashierFake
      */
     public function bind(): static
     {
+        // Binding twice would leave the first closure winning every match, so
+        // a second Cashier::fake() call returns this same live instance.
+        if ($this->bound) {
+            return $this;
+        }
+
+        $this->bound = true;
+
         $response = fn (ClientRequest $request) => Http::response($this->apiResponse($request->data()));
 
-        Http::fake(array_fill_keys(static::HOSTS, $response));
+        Http::fake(array_fill_keys($this->hosts(), $response));
 
         return $this;
+    }
+
+    /**
+     * The Fiuu hosts to intercept, taken from the configured URLs.
+     *
+     * @return list<string>
+     */
+    protected function hosts(): array
+    {
+        $hosts = [];
+
+        foreach (['pay_url', 'sandbox_pay_url', 'api_url', 'sandbox_api_url',
+            'recurring_url', 'sandbox_recurring_url', 'card_url', 'sandbox_card_url',
+            'card_api_url', 'sandbox_card_api_url'] as $key) {
+            if ($host = parse_url((string) config("cashier.{$key}"), PHP_URL_HOST)) {
+                $hosts[] = $host.'/*';
+            }
+        }
+
+        return array_values(array_unique($hosts));
     }
 
     /**
@@ -114,9 +142,23 @@ class CashierFake
 
         // Sent through the kernel rather than the router so the controller's
         // injected Request is this payload, exactly as it is in production.
-        return app(Kernel::class)->handle(
+        $response = app(Kernel::class)->handle(
             Request::create(route('cashier.notify'), 'POST', $payload)
         );
+
+        // The kernel renders an exception into a response, and a rejected
+        // notification answers 403 or 404, so a helper named settle() would
+        // otherwise return having settled nothing.
+        if ($response->getStatusCode() !== 200) {
+            throw new RuntimeException(sprintf(
+                'Fiuu webhook returned %d for order %s: %s',
+                $response->getStatusCode(),
+                $payload['orderid'] ?? '',
+                $response->getContent()
+            ));
+        }
+
+        return $response;
     }
 
     /**

@@ -87,12 +87,24 @@ Publish the configuration file:
 php artisan vendor:publish --tag="cashier-fiuu-config"
 ```
 
+Once your credentials are in `.env`, confirm the application can actually bill:
+
+```bash
+php artisan cashier:check
+```
+
+It reports your credentials, hosts, webhook routes and renewal schedule as
+pass, warn or fail rows, calls Fiuu once to prove the credentials are accepted,
+and exits non-zero if anything would stop a payment. Pass `--offline` to skip
+the call to Fiuu.
+
 ### Versioning
 
-Cashier Fiuu follows semantic versioning. Releases are tagged `v1.1.0`, and each minor line keeps its own branch for maintenance:
+Cashier Fiuu follows semantic versioning. Releases are tagged `v1.3.0`, and each minor line keeps its own branch for maintenance:
 
 | Branch | Latest release | Laravel |
 | ------ | -------------- | ------- |
+| `1.3`  | `v1.3.0`       | 10 - 13 |
 | `1.2`  | `v1.2.0`       | 10 - 13 |
 | `1.1`  | `v1.1.0`       | 10 - 13 |
 | `1.0`  | `v1.0.1`       | 10 - 13 |
@@ -100,7 +112,7 @@ Cashier Fiuu follows semantic versioning. Releases are tagged `v1.1.0`, and each
 Requiring `^1.0` picks up every 1.x release, which is what you want. Composer resolves from the tags, so the branch names only matter if you track unreleased work:
 
 ```bash
-composer require oc-globaltech/cashier-fiuu:dev-1.2
+composer require oc-globaltech/cashier-fiuu:dev-1.3
 ```
 
 That needs `"minimum-stability": "dev"` and `"prefer-stable": true` in your application, and it moves under you. Pin a tag for anything you deploy.
@@ -169,6 +181,43 @@ The command charges every subscription that has fallen due and requeries any cha
 ### Currency configuration
 
 Cashier's default currency is Malaysian Ringgit (MYR). You may change it with the `CASHIER_CURRENCY` environment variable, and set the locale used to format money for display with `CASHIER_CURRENCY_LOCALE`. Formatting locales other than `en` require the `ext-intl` PHP extension.
+
+### Plans
+
+Naming your prices in `config/cashier.php` keeps them out of your controllers:
+
+```php
+'plans' => [
+    'pro' => [
+        'amount' => 4990,      // Minor units: RM 49.90
+        'currency' => 'MYR',
+        'interval' => 'month',
+        'interval_count' => 1,
+        'trial_days' => 14,
+    ],
+
+    'enterprise' => [
+        'amount' => 19900,
+        'interval' => 'year',
+    ],
+],
+```
+
+A named plan supplies the defaults for every subscription started on it, so the
+call site is just the plan name:
+
+```php
+$user->newSubscription('default', 'pro')->checkout();
+```
+
+Every value is a default. A fluent call made afterwards still wins, so
+`->price(2000)->yearly()` overrides the configured amount and interval, and a
+plan name that is not in the config file simply leaves the builder as it was.
+
+A subscription copies the amount and interval at the moment it is created.
+**Changing a price here never reprices the customers already on that plan**;
+they keep what they agreed to until you `swap()` them onto something else,
+which is almost always what you want when a price goes up.
 
 ## Customers
 
@@ -286,6 +335,21 @@ Only card channels issue the token that recurring billing needs, so a subscripti
 ```
 
 Set a default with `FIUU_CHANNEL`.
+
+### Protecting routes
+
+The `subscribed` middleware turns away a customer with no active subscription:
+
+```php
+Route::get('/dashboard', ...)->middleware('subscribed');
+
+// A specific plan, on a specific subscription type:
+Route::get('/reports', ...)->middleware('subscribed:default,enterprise');
+```
+
+A browser is redirected to `config('cashier.subscribe_redirect')`, which
+defaults to `/billing`; a request that expects JSON gets a `402 Payment
+Required` instead.
 
 ### Checking subscription status
 
@@ -562,15 +626,60 @@ Event::listen(function (PaymentFailed $event) {
 
 ## Testing
 
-Use Laravel's HTTP fake; Cashier talks to Fiuu through the `Http` facade:
+`Cashier::fake()` stands in for Fiuu. It intercepts every outbound call to your
+configured Fiuu hosts, and settles payments by driving your own webhook route
+with correctly signed payloads, so you never have to compute an `skey` yourself:
 
 ```php
-Http::fake([
-    '*' => Http::response([['status' => 'accepted', 'orderid' => 'x', 'tranID' => 100000]]),
-]);
+use OcGlobalTech\CashierFiuu\Cashier;
+
+public function test_a_customer_can_subscribe(): void
+{
+    $fiuu = Cashier::fake();
+
+    $user = User::factory()->create();
+
+    $checkout = $user->newSubscription('default', 'pro')->checkout();
+
+    // Nothing is active until Fiuu confirms the payment.
+    $this->assertFalse($user->subscribed());
+
+    $fiuu->settle($checkout->transaction(), token: 'TK_TEST_1');
+
+    $this->assertTrue($user->fresh()->subscribed());
+}
 ```
 
-The package's own test suite shows the full pattern for faking a webhook, including how to compute a valid `skey`. Run it with:
+The three outcomes Fiuu can report:
+
+```php
+$fiuu->settle($transaction);                 // paid
+$fiuu->settle($transaction, 'TK_TEST_1');    // paid, and a card token stored
+$fiuu->fail($transaction, 'Do not honour');  // refused
+$fiuu->pend($transaction);                   // accepted but not yet cleared
+```
+
+Each drives the real webhook controller, so the signature check, the token
+storage, the dunning rules and your event listeners all run. A notification the
+controller rejects raises a `RuntimeException` rather than quietly returning,
+because a helper named `settle()` that settles nothing is worse than a failure.
+
+Renewals are charged against the fake too, and can be refused:
+
+```php
+$fiuu->refuseRecurring('Token not found');
+
+$transaction = $subscription->charge();
+
+$this->assertTrue($transaction->failed());
+```
+
+`Cashier::fake()` is additive: it only stubs the Fiuu hosts, so your own
+`Http::fake()` calls for other services keep working. Calling it twice returns
+the same instance rather than a second, inert one.
+
+To drive a webhook by hand instead, the package's own test suite shows the full
+payload and how its `skey` is computed. Run it with:
 
 ```bash
 composer test
@@ -663,6 +772,25 @@ FIUU_SANDBOX_RECURRING_URL=
 FIUU_SANDBOX_CARD_URL=
 FIUU_SANDBOX_CARD_API_URL=
 ```
+
+## Upgrading to 1.3
+
+Nothing to migrate and nothing breaking: 1.3 only adds. Worth knowing:
+
+- `php artisan cashier:check` reports whether the application can bill at all.
+- Prices can be named under `plans` in `config/cashier.php`. Existing call
+  sites that pass `->price()` keep working and still win over a named plan.
+- `swap()`'s second argument is now optional: `swap('enterprise')` takes the
+  amount from the named plan, and leaves the seat count alone. Passing an
+  amount explicitly behaves exactly as before.
+- `Cashier::fake()` replaces hand-built webhook payloads in your tests. See
+  [Testing](#testing).
+- The `subscribed` middleware is registered for you.
+- An empty `merchant_id`, `verify_key` or `secret_key` now throws
+  `InvalidConfiguration` naming the missing variable, instead of signing
+  requests with an empty string and leaving Fiuu to reject them.
+- If you extended `WebhookController` and overrode `keyFor()`, that method is
+  now `Transaction::notificationKey()`.
 
 ## Upgrading to 1.2
 

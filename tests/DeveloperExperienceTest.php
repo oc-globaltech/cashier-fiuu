@@ -103,7 +103,9 @@ class DeveloperExperienceTest extends TestCase
 
         $transaction = $this->createUser()->newSubscription('default', 'pro')->checkout()->transaction();
 
-        $fiuu->fail($transaction, 'Insufficient funds');
+        $response = $fiuu->fail($transaction, 'Insufficient funds');
+
+        $this->assertSame(200, $response->getStatusCode());
 
         $this->assertTrue($transaction->refresh()->failed());
         $this->assertSame('Insufficient funds', $transaction->error_description);
@@ -127,7 +129,7 @@ class DeveloperExperienceTest extends TestCase
 
         $this->assertSame(Transaction::TYPE_RECURRING, $renewal->type);
 
-        $fiuu->settle($renewal);
+        $this->assertSame(200, $fiuu->settle($renewal)->getStatusCode());
 
         $this->assertTrue($renewal->refresh()->paid());
         $this->assertSame(Subscription::STATUS_ACTIVE, $subscription->refresh()->fiuu_status);
@@ -199,5 +201,48 @@ class DeveloperExperienceTest extends TestCase
         $fiuu->settle($user->newSubscription('default', 'pro')->checkout()->transaction(), 'TK_FAKE_1');
 
         $this->actingAs($user->fresh())->get('/reports')->assertSee('ok');
+    }
+
+    public function test_the_fake_refuses_to_settle_an_order_fiuu_does_not_know(): void
+    {
+        $this->definePlans();
+
+        $fiuu = Cashier::fake();
+
+        $transaction = $this->createUser()->newSubscription('default', 'pro')->checkout()->transaction();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('404');
+
+        $fiuu->settle($transaction, null, ['orderid' => 'not-an-order']);
+    }
+
+    public function test_the_subscribed_middleware_checks_the_plan(): void
+    {
+        $this->definePlans();
+
+        \Illuminate\Support\Facades\Route::get('/reports', fn () => 'ok')
+            ->middleware('subscribed:default,enterprise');
+
+        $fiuu = Cashier::fake();
+
+        $user = $this->createUser();
+
+        $fiuu->settle($user->newSubscription('default', 'pro')->checkout()->transaction(), 'TK_FAKE_1');
+
+        $this->actingAs($user->fresh())->get('/reports')->assertRedirect('/billing');
+    }
+
+    public function test_swapping_plans_leaves_the_seat_count_alone(): void
+    {
+        $this->definePlans();
+
+        $subscription = $this->createUser()->newSubscription('default', 'pro')
+            ->quantity(5)
+            ->checkout()->transaction()->subscription;
+
+        $subscription->swap('enterprise');
+
+        $this->assertSame(5, $subscription->quantity);
     }
 }

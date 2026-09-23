@@ -89,6 +89,8 @@ class Cashier
      */
     public static function fake(): Testing\CashierFake
     {
+        app()->singletonIf(Testing\CashierFake::class);
+
         return app(Testing\CashierFake::class)->bind();
     }
 

@@ -377,13 +377,15 @@ class Subscription extends Model
     /**
      * The columns a named plan changes when a subscription swaps onto it.
      *
+     * Quantity is left alone: seats belong to the customer, not the plan.
+     *
      * @return array<string, mixed>
      */
     protected static function swapDefaults(string $plan): array
     {
         return array_intersect_key(
             Cashier::plan($plan),
-            array_flip(['amount', 'currency', 'interval', 'interval_count', 'quantity'])
+            array_flip(['amount', 'currency', 'interval', 'interval_count'])
         );
     }
 
