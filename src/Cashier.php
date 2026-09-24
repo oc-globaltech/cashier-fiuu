@@ -62,7 +62,11 @@ class Cashier
 
         $model = static::$customerModel;
 
-        return (new $model)->where('fiuu_token', $token)->first();
+        $builder = in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($model))
+            ? $model::withTrashed()
+            : new $model;
+
+        return $builder->where('fiuu_token', $token)->first();
     }
 
     /**

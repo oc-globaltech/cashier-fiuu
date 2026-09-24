@@ -152,6 +152,10 @@ use OcGlobalTech\CashierFiuu\Cashier;
 Cashier::useCustomerModel(Team::class);
 ```
 
+Cashier uses your model's `getForeignKey()` to resolve relationship columns, so a `Team` model expects `team_id` in the subscriptions and transactions tables. If your custom model uses a different key, override `getForeignKey()` or update the published migrations.
+
+If your billable model uses soft deletes, `Cashier::findBillable()` will search trashed records too.
+
 ### Webhooks
 
 Cashier registers three routes for you:
@@ -230,6 +234,26 @@ $user->fiuuToken();     // The Fiuu card token, or null.
 
 Fiuu has no customer object. A card token *is* the customer, as far as the gateway is concerned.
 
+### Syncing customer details
+
+Push the current name, email and phone to Fiuu so the stored token stays attached to the right buyer:
+
+```php
+$user->syncFiuuCustomerDetails();
+```
+
+Or update explicitly:
+
+```php
+$user->updateFiuuCustomer(['name' => 'New Name', 'email' => 'new@example.com']);
+```
+
+Retrieve what Fiuu knows about the token:
+
+```php
+$details = $user->asFiuuToken();
+```
+
 ### Billing details
 
 Fiuu ties a saved card to the customer's name, email and mobile number, so passing placeholder values detaches the token from the customer and breaks one-click payments. Override these accessors if your model stores them elsewhere:
@@ -280,6 +304,25 @@ $user->revokePaymentMethod();   // withdraw it at Fiuu, then forget it
 ```
 
 `deletePaymentMethod()` only stops your application charging the token; it stays valid at Fiuu. When a customer asks you to remove their card, use `revokePaymentMethod()`, which deletes the token through Fiuu's Token API first.
+
+### 3-D Secure and card verification
+
+The `Payment` class wraps a transaction and exposes Fiuu's 3-D Secure and zero-dollar verification APIs with an API similar to Cashier Stripe:
+
+```php
+use OcGlobalTech\CashierFiuu\Payment;
+
+$payment = $transaction->asPayment();
+
+$payment->isSuccessful();          // bool
+$payment->isPending();             // bool
+$payment->requiresConfirmation();  // bool — true when 3-D Secure may be needed
+
+$payment->authenticate(['return_url' => route('fiuu.return')]);
+$payment->verifyCard('12', '2030');
+```
+
+`authenticate()` returns the redirect URL Fiuu gives for 3-D Secure. `verifyCard()` checks whether a stored token is still live without charging it.
 
 ## Subscriptions
 
@@ -605,6 +648,34 @@ $transaction->requery();   // Ask Fiuu for the authoritative status.
 
 Transaction types are `checkout`, `recurring`, `charge` and `verification`.
 
+## Invoices
+
+Fiuu has no native invoice object, so Cashier treats each successful transaction as an invoice. This provides API parity with Laravel Cashier (Stripe):
+
+```php
+$invoices = $user->invoices();
+
+foreach ($invoices as $invoice) {
+    $invoice->date();           // Carbon|null
+    $invoice->total();          // "RM 29.00"
+    $invoice->rawTotal();       // 2900 (minor units)
+    $invoice->amountRefunded(); // "RM 0.00"
+    $invoice->refunds();        // Collection of refund transactions
+}
+```
+
+Find one by order ID:
+
+```php
+$invoice = $user->findInvoice('ord-1');
+```
+
+Create an invoice for a one-off charge:
+
+```php
+$invoice = $user->invoiceFor('Annual conference ticket', 5000);
+```
+
 ## Events
 
 | Event | Fired when |
@@ -615,6 +686,10 @@ Transaction types are `checkout`, `recurring`, `charge` and `verification`.
 | `PaymentFailed` | Fiuu refused a payment. |
 | `SubscriptionCreated` | A subscription record was created. |
 | `SubscriptionRenewed` | A subscription's payment cleared and its period advanced. |
+| `SubscriptionPaymentSucceeded` | A subscription payment cleared (distinct from one-off charges). |
+| `SubscriptionPaymentFailed` | A subscription payment was refused. |
+| `SubscriptionCanceled` | A subscription was canceled. |
+| `SubscriptionResumed` | A canceled subscription was resumed within its grace period. |
 
 ```php
 use OcGlobalTech\CashierFiuu\Events\PaymentFailed;
@@ -828,8 +903,9 @@ Payments now expire: a pending payment older than `FIUU_ABANDON_AFTER` minutes (
 - **There is no published sandbox host for the recurring endpoint.** Ask Fiuu support for yours and set `FIUU_SANDBOX_RECURRING_URL`. Until you do, Cashier throws rather than send a sandbox charge to the production host.
 - **Recurring callbacks are signed with the verify key**, per the Recurring API specification, while hosted payment callbacks are signed with the secret key. If your account signs recurring callbacks with the secret key instead, set `FIUU_RECURRING_CALLBACK_KEY=secret`.
 - **DirectDebit e-mandates are processed in batches**, twice per working day, with results arriving the next working day. Set `FIUU_RECORD_TYPE=E` to use them and expect the delay.
-- **No coupons, tax handling, metered billing, multi-price subscriptions, proration or PDF invoices.** None of these exist in Fiuu's API; building them would mean building a second billing system on top of this one.
-- **No SCA handling in the billing flow.** 3-D Secure happens on Fiuu's hosted page, before your application is involved. `Cashier::fiuu()->authenticateCard()` exposes Fiuu's standalone 3-D Secure API if you need to run it yourself.
+- **No coupons, tax handling, metered billing, multi-price subscriptions or proration.** None of these exist in Fiuu's API; building them would mean building a second billing system on top of this one.
+- **Invoices are transaction wrappers, not PDFs.** Fiuu has no native invoice object, so Cashier's `Invoice` class wraps a `Transaction`. It provides API parity with Cashier Stripe but cannot generate PDFs.
+- **3-D Secure is exposed via the `Payment` class.** Fiuu runs 3-D Secure on its hosted page by default, but `$transaction->asPayment()->authenticate()` exposes the standalone Card Authentication API for applications that need to run it themselves.
 - **Cashier never touches a card number.** Fiuu's direct server payment API, `tokenize()` and `installmentTenures()` all want one, so the first two take an already encrypted blob and the third is not wrapped at all. See "What Cashier will not do for you".
 - **Fiuu's legacy recurring endpoint (`Recurring/input.php`) is not wrapped**; the v7 endpoint supersedes it. Nor is `query/vcode.php`, which is a checksum calculator for developers rather than a payment API.
 

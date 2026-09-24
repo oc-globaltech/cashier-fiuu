@@ -80,7 +80,9 @@ class Transaction extends Model
 
     public function owner(): BelongsTo
     {
-        return $this->belongsTo(Cashier::$customerModel, 'user_id');
+        $model = Cashier::$customerModel;
+
+        return $this->belongsTo($model, (new $model)->getForeignKey());
     }
 
     public function user(): BelongsTo
@@ -386,6 +388,14 @@ class Transaction extends Model
     public function amount(): string
     {
         return Cashier::formatAmount($this->amount, $this->currency);
+    }
+
+    /**
+     * Wrap this transaction in a Payment instance.
+     */
+    public function asPayment(): Payment
+    {
+        return new Payment($this);
     }
 
     public function refundedAmount(): string

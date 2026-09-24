@@ -21,7 +21,9 @@ trait ManagesSubscriptions
 
     public function subscriptions(): HasMany
     {
-        return $this->hasMany(Cashier::$subscriptionModel, 'user_id')->orderByDesc('created_at');
+        $model = Cashier::$subscriptionModel;
+
+        return $this->hasMany($model, $this->getForeignKey())->orderByDesc('created_at');
     }
 
     public function subscription(string $type = 'default'): ?Subscription

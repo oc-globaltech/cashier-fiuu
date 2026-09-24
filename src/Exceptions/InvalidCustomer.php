@@ -6,11 +6,16 @@ use Exception;
 
 class InvalidCustomer extends Exception
 {
-    public static function notYetTokenized($owner): static
+    public static function notYetCreated($owner): static
     {
         return new static(
             class_basename($owner).' is not yet a Fiuu customer. '.
             'A card token is only issued after a first successful payment.'
         );
+    }
+
+    public static function notYetTokenized($owner): static
+    {
+        return static::notYetCreated($owner);
     }
 }

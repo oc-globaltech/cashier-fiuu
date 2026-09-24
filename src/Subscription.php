@@ -44,7 +44,9 @@ class Subscription extends Model
 
     public function owner(): BelongsTo
     {
-        return $this->belongsTo(Cashier::$customerModel, 'user_id');
+        $model = Cashier::$customerModel;
+
+        return $this->belongsTo($model, (new $model)->getForeignKey());
     }
 
     public function user(): BelongsTo
@@ -424,6 +426,8 @@ class Subscription extends Model
             'ends_at' => $endsAt,
         ])->save();
 
+        event(new Events\SubscriptionCanceled($this));
+
         return $this;
     }
 
@@ -433,6 +437,8 @@ class Subscription extends Model
             'fiuu_status' => static::STATUS_CANCELED,
             'ends_at' => Carbon::instance($endsAt),
         ])->save();
+
+        event(new Events\SubscriptionCanceled($this));
 
         return $this;
     }
@@ -448,6 +454,8 @@ class Subscription extends Model
             'next_billing_at' => null,
         ])->save();
 
+        event(new Events\SubscriptionCanceled($this));
+
         return $this;
     }
 
@@ -457,6 +465,8 @@ class Subscription extends Model
             'fiuu_status' => static::STATUS_CANCELED,
             'ends_at' => Carbon::now(),
         ])->save();
+
+        event(new Events\SubscriptionCanceled($this));
     }
 
     /**
@@ -473,6 +483,8 @@ class Subscription extends Model
             'ends_at' => null,
             'next_billing_at' => $this->next_billing_at ?: Carbon::now(),
         ])->save();
+
+        event(new Events\SubscriptionResumed($this));
 
         return $this;
     }
@@ -582,6 +594,7 @@ class Subscription extends Model
         }
 
         event(new Events\SubscriptionRenewed($this, $transaction));
+        event(new Events\SubscriptionPaymentSucceeded($this, $transaction));
 
         return $this;
     }
@@ -598,6 +611,7 @@ class Subscription extends Model
         $this->advanceBillingPeriod();
 
         event(new Events\SubscriptionRenewed($this, $transaction));
+        event(new Events\SubscriptionPaymentSucceeded($this, $transaction));
 
         return $this;
     }
@@ -617,17 +631,27 @@ class Subscription extends Model
         // A subscription whose very first payment failed never started, and
         // there is no stored card to retry it against.
         if ($this->incomplete()) {
-            return $this->cancelNow();
+            $this->cancelNow();
+
+            event(new Events\SubscriptionPaymentFailed($this, $transaction));
+
+            return $this;
         }
 
         if ($this->consecutiveFailures() >= (int) config('cashier.max_retries', 3)) {
-            return $this->cancelNow();
+            $this->cancelNow();
+
+            event(new Events\SubscriptionPaymentFailed($this, $transaction));
+
+            return $this;
         }
 
         $this->forceFill([
             'fiuu_status' => static::STATUS_PAST_DUE,
             'next_billing_at' => Carbon::now()->addMinutes((int) config('cashier.retry_after', 1440)),
         ])->save();
+
+        event(new Events\SubscriptionPaymentFailed($this, $transaction));
 
         return $this;
     }

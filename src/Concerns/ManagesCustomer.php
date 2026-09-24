@@ -3,6 +3,7 @@
 namespace OcGlobalTech\CashierFiuu\Concerns;
 
 use OcGlobalTech\CashierFiuu\Exceptions\InvalidCustomer;
+use OcGlobalTech\CashierFiuu\Fiuu;
 
 trait ManagesCustomer
 {
@@ -61,5 +62,70 @@ trait ManagesCustomer
     public function fiuuAddress(): array
     {
         return [];
+    }
+
+    /**
+     * Metadata to send with token API requests.
+     *
+     * @return array<string, mixed>
+     */
+    public function fiuuMetadata(): array
+    {
+        return [];
+    }
+
+    /**
+     * Get the buyer details array Fiuu's Token API expects.
+     *
+     * @return array<string, mixed>
+     */
+    public function fiuuBuyerDetails(): array
+    {
+        return [
+            'id' => (string) $this->getKey(),
+            'name' => $this->fiuuName(),
+            'email' => $this->fiuuEmail(),
+            'mobile' => $this->fiuuPhone(),
+        ];
+    }
+
+    /**
+     * Retrieve the token details Fiuu holds for this buyer.
+     *
+     * @return array<string, mixed>
+     */
+    public function asFiuuToken(): array
+    {
+        $this->assertTokenExists();
+
+        return app(Fiuu::class)->tokenDetails((string) $this->fiuu_token);
+    }
+
+    /**
+     * Update the buyer details Fiuu stores against the current token.
+     *
+     * @return array<string, mixed>
+     */
+    public function updateFiuuCustomer(array $options = []): array
+    {
+        $this->assertTokenExists();
+
+        $details = array_merge($this->fiuuBuyerDetails(), $options);
+
+        return app(Fiuu::class)->updateToken((string) $this->fiuu_token, $details);
+    }
+
+    /**
+     * Push the current name, email and phone to Fiuu.
+     *
+     * @return $this
+     */
+    public function syncFiuuCustomerDetails(): static
+    {
+        if ($this->hasFiuuToken()) {
+            $this->updateFiuuCustomer();
+        }
+
+        return $this;
     }
 }

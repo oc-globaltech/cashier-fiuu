@@ -44,11 +44,27 @@ class CashierFake
 
         $this->bound = true;
 
-        $response = fn (ClientRequest $request) => Http::response($this->apiResponse($request->data()));
-
-        Http::fake(array_fill_keys($this->hosts(), $response));
+        Http::fake($this->handlers());
 
         return $this;
+    }
+
+    /**
+     * Build a map of host patterns to response closures.
+     *
+     * @return array<string, callable>
+     */
+    protected function handlers(): array
+    {
+        $handlers = [];
+
+        foreach ($this->hosts() as $host) {
+            $handlers[$host] = fn (ClientRequest $request) => Http::response(
+                $this->apiResponse($request)
+            );
+        }
+
+        return $handlers;
     }
 
     /**
@@ -186,14 +202,74 @@ class CashierFake
     /**
      * The canned answer for an outbound Fiuu call.
      *
-     * Only the recurring endpoint has to be convincing; the rest are read
-     * operations whose responses the caller under test can assert on itself.
-     *
-     * @param  array<string, mixed>  $data
-     * @return array<string, mixed>|list<array<string, mixed>>
+     * The response shape depends on which endpoint was hit:
+     * - Recurring API: list of charge results
+     * - Token API: status boolean
+     * - Card API: Status code and transaction details
+     * - Everything else: generic success
      */
-    protected function apiResponse(array $data): array
+    protected function apiResponse(ClientRequest $request): array
     {
+        $url = $request->url();
+        $data = $request->data();
+
+        // Token API lives on the payment host.
+        if (str_contains($url, '/RMS/API/token/')) {
+            return ['status' => true];
+        }
+
+        // Card APIs (3-D Secure, verification, instalments).
+        if (str_contains($url, '/RMS/API/Card/')) {
+            return [
+                'Status' => '00',
+                'TxnID' => (string) random_int(100000, 999999),
+                'Reason' => 'Approved',
+            ];
+        }
+
+        // Refund APIs have their own shapes; return a signed acceptance.
+        if (str_contains($url, '/RMS/API/refundAPI/')) {
+            $refundType = (string) ($data['RefundType'] ?? 'P');
+            $merchantId = $this->fiuu->merchantId();
+            $refId = (string) ($data['RefID'] ?? 'ref-1');
+            $refundId = (string) random_int(100000, 999999);
+            $txnId = (string) ($data['TxnID'] ?? '77001');
+            $amount = (string) ($data['Amount'] ?? '20.00');
+            $status = '22';
+
+            $signature = md5(
+                $refundType.$merchantId.$refId.$refundId.$txnId.$amount.$status.$this->fiuu->secretKey()
+            );
+
+            return [
+                'RefundType' => $refundType,
+                'MerchantID' => $merchantId,
+                'RefID' => $refId,
+                'RefundID' => $refundId,
+                'TxnID' => $txnId,
+                'Amount' => $amount,
+                'Status' => $status,
+                'Signature' => $signature,
+            ];
+        }
+
+        // Capture / void / settlement / query APIs.
+        if (str_contains($url, '/RMS/API/capstxn/')
+            || str_contains($url, '/RMS/API/VoidPending')
+            || str_contains($url, '/RMS/API/settlement/')
+            || str_contains($url, '/RMS/API/PSQ/')
+            || str_contains($url, '/RMS/API/gate-query/')
+            || str_contains($url, '/RMS/API/chkstat/')
+            || str_contains($url, '/RMS/query/')
+            || str_contains($url, '/RMS/q_by_tid.php')
+            || str_contains($url, '/RMS/q_by_oid.php')
+            || str_contains($url, '/RMS/API/Recurring/get_plans.php')
+            || str_contains($url, '/RMS/API/staticqr/')
+        ) {
+            return ['StatCode' => '00'];
+        }
+
+        // Default: recurring charge endpoint.
         $orderId = $data['orderid'] ?? ($data['oID'] ?? '');
 
         if ($this->refuseRecurring) {
