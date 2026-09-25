@@ -55,8 +55,8 @@ class Fiuu
             'currency' => $charge['currency'],
             'amount' => $charge['amount'],
             'name' => $this->sanitize($charge['name'] ?? ''),
-            'email' => $charge['email'] ?? '',
-            'mobile' => $charge['mobile'] ?? '',
+            'email' => $this->sanitize($charge['email'] ?? ''),
+            'mobile' => $this->sanitize($charge['mobile'] ?? ''),
             'description' => $this->sanitize($charge['description'] ?? ''),
         ];
 
@@ -69,7 +69,7 @@ class Fiuu
             $fields['amount']
         );
 
-        $fields['customer_id'] = $charge['customer_id'] ?? '';
+        $fields['customer_id'] = $this->sanitize($charge['customer_id'] ?? '');
 
         return implode('|', $fields);
     }

@@ -9,8 +9,10 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use OcGlobalTech\CashierFiuu\Exceptions\InvalidAmount;
-use OcGlobalTech\CashierFiuu\Exceptions\InvalidPaymentMethod;
+use OcGlobalTech\CashierFiuu\Exceptions\SubscriptionUpdateFailure;
 
 /**
  * A subscription billed by this application against a stored Fiuu token.
@@ -30,6 +32,9 @@ class Subscription extends Model
     const STATUS_PAST_DUE = 'past_due';
 
     const STATUS_CANCELED = 'canceled';
+
+    /** The columns swapAndInvoice() restores when its charge is declined. */
+    const SWAP_COLUMNS = ['plan', 'amount', 'currency', 'interval', 'interval_count'];
 
     protected $guarded = [];
 
@@ -72,10 +77,13 @@ class Subscription extends Model
 
     /**
      * Determine if the subscription entitles the owner to the service.
+     *
+     * A trial is not enough on its own: until the first payment clears the
+     * subscription is incomplete, and a paid or tokened trial is active.
      */
     public function valid(): bool
     {
-        return $this->active() || $this->onTrial() || $this->onGracePeriod();
+        return $this->active() || $this->onGracePeriod();
     }
 
     public function active(): bool
@@ -367,13 +375,36 @@ class Subscription extends Model
     }
 
     /**
-     * Swap the plan and charge the difference straight away.
+     * Swap the plan and charge the new plan's full amount straight away.
+     *
+     * If Fiuu declines the charge, the previous plan is put back.
      */
     public function swapAndInvoice(string $plan, ?int $amount = null, array $options = []): Transaction
     {
+        if ($this->incomplete()) {
+            throw SubscriptionUpdateFailure::incompleteSubscription($this);
+        }
+
+        if ($this->canceled()) {
+            throw SubscriptionUpdateFailure::canceledSubscription($this);
+        }
+
+        if ($this->hasPendingPayment()) {
+            throw SubscriptionUpdateFailure::pendingPayment($this);
+        }
+
+        $previous = Arr::only($this->getAttributes(), static::SWAP_COLUMNS);
+
         $this->swap($plan, $amount, $options);
 
-        return $this->charge();
+        try {
+            return $this->charge(null, ['swap_from' => $previous]);
+        } catch (SubscriptionUpdateFailure $e) {
+            // A renewal took the lock after the check above.
+            $this->forceFill($previous)->save();
+
+            throw $e;
+        }
     }
 
     /**
@@ -419,6 +450,12 @@ class Subscription extends Model
      */
     public function cancel(): static
     {
+        // Nothing was paid for, so there is no period to run out. A grace
+        // period here would let resume() activate a subscription never paid.
+        if ($this->incomplete()) {
+            return $this->cancelNow();
+        }
+
         $endsAt = $this->onTrial() ? $this->trial_ends_at : ($this->next_billing_at ?: Carbon::now());
 
         $this->forceFill([
@@ -433,6 +470,10 @@ class Subscription extends Model
 
     public function cancelAt(DateTimeInterface $endsAt): static
     {
+        if ($this->incomplete()) {
+            return $this->cancelNow();
+        }
+
         $this->forceFill([
             'fiuu_status' => static::STATUS_CANCELED,
             'ends_at' => Carbon::instance($endsAt),
@@ -501,30 +542,86 @@ class Subscription extends Model
      * Fiuu answers asynchronously, so the returned transaction is pending
      * until the callback arrives. It is only marked paid, and the billing
      * period only advanced, once Fiuu confirms.
+     *
+     * With no card on file the charge is recorded as failed, not thrown, so
+     * it counts towards max_retries and the subscription lapses rather than
+     * staying valid unbilled.
+     *
+     * @param  array<string, mixed>  $payload  Stored on the transaction
+     *
+     * @throws SubscriptionUpdateFailure when a charge is already pending
      */
-    public function charge(?int $amount = null): Transaction
+    public function charge(?int $amount = null, array $payload = []): Transaction
     {
-        $token = $this->fiuu_token ?: $this->owner?->fiuu_token;
+        return $this->startCharge($amount, $payload, false);
+    }
 
-        if (! $token) {
-            throw InvalidPaymentMethod::notFound($this->owner);
+    /**
+     * Charge the renewal, if it is still due once the lock is held.
+     *
+     * The renewal command works from a list read before any charge went
+     * out, and a webhook can settle this subscription meanwhile.
+     *
+     * @return Transaction|null null when no longer due or already pending
+     */
+    public function renew(): ?Transaction
+    {
+        return $this->startCharge(null, [], true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    protected function startCharge(?int $amount, array $payload, bool $renewal): ?Transaction
+    {
+        // The pending row is the renewal lock, so looking for one and taking
+        // it happen under a row lock: two overlapping runs must not both bill.
+        // ponytail: lockForUpdate is a no-op on SQLite, which serialises
+        // writers itself; add a unique billing-period key if that falls short.
+        $transaction = DB::transaction(function () use (&$amount, $payload, $renewal) {
+            $fresh = $this->newQuery()->lockForUpdate()->find($this->getKey());
+
+            $this->setRawAttributes($fresh->getAttributes(), true);
+
+            if ($renewal && ! $this->dueForRenewal()) {
+                return null;
+            }
+
+            if ($this->hasPendingPayment()) {
+                if ($renewal) {
+                    return null;
+                }
+
+                throw SubscriptionUpdateFailure::pendingPayment($this);
+            }
+
+            $amount ??= $this->amount * $this->quantity;
+
+            static::guardAgainstMinimum($amount, $this->currency);
+
+            return $this->transactions()->create([
+                'user_id' => $this->user_id,
+                'order_id' => Cashier::orderId($this->owner ?? $this, 'sub'),
+                'type' => Transaction::TYPE_RECURRING,
+                'status' => Transaction::STATUS_PENDING,
+                'amount' => $amount,
+                'currency' => $this->currency,
+                'payload' => $payload ?: null,
+            ]);
+        });
+
+        if (! $transaction) {
+            return null;
         }
 
-        $amount ??= $this->amount * $this->quantity;
+        $owner = $this->owner;
+        $token = $this->fiuu_token ?: $owner?->fiuu_token;
 
-        static::guardAgainstMinimum($amount, $this->currency);
+        if (! $token) {
+            return $this->failCharge($transaction, [], 'No payment method is on file.');
+        }
 
         $fiuu = app(Fiuu::class);
-        $owner = $this->owner;
-
-        $transaction = $this->transactions()->create([
-            'user_id' => $this->user_id,
-            'order_id' => Cashier::orderId($owner ?? $this, 'sub'),
-            'type' => Transaction::TYPE_RECURRING,
-            'status' => Transaction::STATUS_PENDING,
-            'amount' => $amount,
-            'currency' => $this->currency,
-        ]);
 
         $results = $fiuu->recurring([[
             'token' => $token,
@@ -541,19 +638,27 @@ class Subscription extends Model
         $result = $results[0] ?? [];
 
         if (($result['status'] ?? 'failed') !== 'accepted') {
-            $transaction->markAsFailed($result, $result['reason'] ?? 'Fiuu did not accept the recurring request.');
-
-            $this->recordFailedPayment($transaction);
-
-            event(new Events\PaymentFailed($transaction));
-
-            return $transaction;
+            return $this->failCharge($transaction, $result, $result['reason'] ?? 'Fiuu did not accept the recurring request.');
         }
 
         $transaction->forceFill([
             'fiuu_id' => $result['tranID'] ?? null,
-            'payload' => $result,
+            'payload' => array_merge($transaction->payload ?? [], $result),
         ])->save();
+
+        return $transaction;
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function failCharge(Transaction $transaction, array $result, string $reason): Transaction
+    {
+        $transaction->markAsFailed($result, $reason);
+
+        $this->recordFailedPayment($transaction);
+
+        event(new Events\PaymentFailed($transaction));
 
         return $transaction;
     }
@@ -583,13 +688,19 @@ class Subscription extends Model
     {
         // A retry of a failed first payment revives the subscription that
         // failure canceled, so the cancellation has to be lifted with it.
+        // cancelNow() also cleared the billing date, which has to come back
+        // too: a trial bills when it ends, anything else from now.
+        $isTrialPayment = $transaction->type === Transaction::TYPE_VERIFICATION;
+
         $this->forceFill([
             'fiuu_status' => static::STATUS_ACTIVE,
             'fiuu_token' => $this->fiuu_token ?: $this->owner?->fiuu_token,
             'ends_at' => null,
+            'next_billing_at' => $this->next_billing_at
+                ?: ($isTrialPayment && $this->trial_ends_at ? $this->trial_ends_at : Carbon::now()),
         ])->save();
 
-        if ($transaction->type !== Transaction::TYPE_VERIFICATION) {
+        if (! $isTrialPayment) {
             $this->advanceBillingPeriod();
         }
 
@@ -628,6 +739,16 @@ class Subscription extends Model
      */
     public function recordFailedPayment(Transaction $transaction): static
     {
+        // A declined plan change puts the old plan back and leaves the
+        // period already paid for alone.
+        if ($previous = $transaction->payload['swap_from'] ?? null) {
+            $this->forceFill(Arr::only($previous, static::SWAP_COLUMNS))->save();
+
+            event(new Events\SubscriptionPaymentFailed($this, $transaction));
+
+            return $this;
+        }
+
         // A subscription whose very first payment failed never started, and
         // there is no stored card to retry it against.
         if ($this->incomplete()) {

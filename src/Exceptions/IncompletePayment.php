@@ -21,4 +21,9 @@ class IncompletePayment extends Exception
     {
         return new static($transaction, "The payment for order {$transaction->order_id} is still pending.");
     }
+
+    public static function failed(Transaction $transaction): static
+    {
+        return new static($transaction, "The payment for order {$transaction->order_id} failed.");
+    }
 }

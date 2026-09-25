@@ -125,6 +125,9 @@ class HashTest extends TestCase
             'currency' => 'MYR',
             'amount' => '20.00',
             'description' => "Pro|Plan\nmonthly",
+            'email' => 'a|b@example.com',
+            'mobile' => "016\n333",
+            'customer_id' => 'c|1',
         ]);
 
         $this->assertCount(13, explode('|', $record));

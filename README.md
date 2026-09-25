@@ -100,11 +100,11 @@ the call to Fiuu.
 
 ### Versioning
 
-Cashier Fiuu follows semantic versioning. Releases are tagged `v1.3.0`, and each minor line keeps its own branch for maintenance:
+Cashier Fiuu follows semantic versioning. Releases are tagged `v1.3.1`, and each minor line keeps its own branch for maintenance:
 
 | Branch | Latest release | Laravel |
 | ------ | -------------- | ------- |
-| `1.3`  | `v1.3.0`       | 10 - 13 |
+| `1.3`  | `v1.3.1`       | 10 - 13 |
 | `1.2`  | `v1.2.0`       | 10 - 13 |
 | `1.1`  | `v1.1.0`       | 10 - 13 |
 | `1.0`  | `v1.0.1`       | 10 - 13 |
@@ -177,10 +177,10 @@ These routes are registered without the `web` middleware group, so they are not 
 ```php
 use Illuminate\Support\Facades\Schedule;
 
-Schedule::command('cashier:renew')->hourly();
+Schedule::command('cashier:renew')->hourly()->withoutOverlapping();
 ```
 
-The command charges every subscription that has fallen due and requeries any charge whose callback never arrived.
+The command charges every subscription that has fallen due and requeries any charge whose callback never arrived. A charge already awaiting Fiuu's answer locks its subscription, so overlapping runs cannot bill it twice, but `withoutOverlapping()` saves them from tripping over each other. Add `->onOneServer()` if more than one server runs the scheduler.
 
 ### Currency configuration
 
@@ -303,7 +303,7 @@ $user->deletePaymentMethod();   // forget it here
 $user->revokePaymentMethod();   // withdraw it at Fiuu, then forget it
 ```
 
-`deletePaymentMethod()` only stops your application charging the token; it stays valid at Fiuu. When a customer asks you to remove their card, use `revokePaymentMethod()`, which deletes the token through Fiuu's Token API first.
+`deletePaymentMethod()` only stops your application charging the token; it stays valid at Fiuu. Either one also removes the token from the customer's subscriptions, which then fail their next renewal and lapse after `FIUU_MAX_RETRIES` unless a new card is stored. Storing a new card moves every subscription onto it. When a customer asks you to remove their card, use `revokePaymentMethod()`, which deletes the token through Fiuu's Token API first.
 
 ### 3-D Secure and card verification
 
@@ -467,11 +467,13 @@ $user->subscription('default')->swap('premium', 4900);
 
 The customer keeps the period they paid for, and the new price applies from the next charge onwards. Fiuu charges a flat amount per request, so there is nothing to prorate.
 
-To charge the new price immediately instead:
+To charge the new plan's full price immediately instead:
 
 ```php
 $user->subscription('default')->swapAndInvoice('premium', 4900);
 ```
+
+`swapAndInvoice()` throws `SubscriptionUpdateFailure` for a subscription that is incomplete, canceled or already has a charge pending. If Fiuu declines the charge, the previous plan is restored and the period already paid for is left alone.
 
 ### Subscription quantity
 
@@ -540,7 +542,7 @@ $user->subscription('default')->cancelAt($date);   // At a specific date.
 $user->subscription('default')->resume();
 ```
 
-A subscription may only be resumed while it is within its grace period.
+A subscription may only be resumed while it is within its grace period. Cancelling one whose first payment never cleared ends it at once, as there is no paid period to run out.
 
 ## Charges
 
@@ -690,6 +692,8 @@ $invoice = $user->invoiceFor('Annual conference ticket', 5000);
 | `SubscriptionPaymentFailed` | A subscription payment was refused. |
 | `SubscriptionCanceled` | A subscription was canceled. |
 | `SubscriptionResumed` | A canceled subscription was resumed within its grace period. |
+
+Payment and subscription events fire inside the database transaction that settles the payment. A listener that throws rolls the settlement back, and Fiuu's retry or the next `cashier:renew` applies it again, so make fulfilment listeners `ShouldQueue` rather than doing slow or non-repeatable work inline. Give them `public $afterCommit = true;` (or set `after_commit` on the queue connection), or a worker may pick the job up before the settlement commits, or even after it rolls back.
 
 ```php
 use OcGlobalTech\CashierFiuu\Events\PaymentFailed;
@@ -852,6 +856,38 @@ FIUU_SANDBOX_RECURRING_URL=
 FIUU_SANDBOX_CARD_URL=
 FIUU_SANDBOX_CARD_API_URL=
 ```
+
+## Upgrading to 1.3.1
+
+A security patch for the billing lifecycle, with nothing to migrate. Some
+behaviour is deliberately stricter:
+
+- `valid()` and `subscribed()` no longer count a trial whose first payment has
+  not cleared, or one canceled outright. `cancel()` on an incomplete
+  subscription now ends it at once, so it can no longer be resumed.
+- `Subscription::charge()` no longer throws `InvalidPaymentMethod` when no card
+  is on file. It records a failed charge instead, so the subscription goes
+  past due and lapses after `FIUU_MAX_RETRIES`. It throws
+  `SubscriptionUpdateFailure` if a charge is already pending. The new
+  `renew()` is what `cashier:renew` calls: it charges only if the
+  subscription is still due once the lock is held, and returns `null`
+  otherwise.
+- `deletePaymentMethod()` and `revokePaymentMethod()` clear the token from the
+  customer's subscriptions too, and a new card reaches all of them.
+- `swapAndInvoice()` refuses incomplete, canceled and pending subscriptions,
+  and restores the previous plan when the charge is declined.
+- `Payment::validate()` throws `IncompletePayment` for a failed payment, not
+  only for a pending one.
+- A paid transaction is final: a later failure notice for it is acknowledged
+  and ignored. Settling a payment, from the webhook or from a requery, now
+  happens in one locked database transaction, so a retry cannot apply it
+  twice and a failure half way rolls it back. See [Events](#events) for what
+  that means for listeners.
+- Before writing off an abandoned charge, `cashier:renew` asks Fiuu about it
+  one last time. Pending refunds are reconciled in their own pass.
+- The default order ID keeps its random suffix for long (UUID) customer keys.
+  Renewals for UUID-keyed customers were failing on a duplicate order ID.
+- Add `->withoutOverlapping()` to your `cashier:renew` schedule.
 
 ## Upgrading to 1.3
 

@@ -111,9 +111,9 @@ class QueryTest extends TestCase
 
     /**
      * Fiuu may have no record of an abandoned page at all, so requerying it
-     * can never resolve it: it has to be written off on a timer instead.
+     * can never resolve it: after one last try it is written off on a timer.
      */
-    public function test_an_abandoned_payment_is_written_off_without_asking_fiuu(): void
+    public function test_an_abandoned_payment_is_written_off_after_one_last_requery(): void
     {
         Http::fake();
 
@@ -123,7 +123,7 @@ class QueryTest extends TestCase
 
         $this->artisan('cashier:renew')->assertSuccessful();
 
-        Http::assertNothingSent();
+        Http::assertSentCount(1);
 
         $this->assertTrue($transaction->refresh()->failed());
         $this->assertTrue($transaction->subscription->refresh()->canceled());

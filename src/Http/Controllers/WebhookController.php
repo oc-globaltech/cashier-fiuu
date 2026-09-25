@@ -7,12 +7,9 @@ use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Log;
 use OcGlobalTech\CashierFiuu\Cashier;
-use OcGlobalTech\CashierFiuu\Events\PaymentFailed;
-use OcGlobalTech\CashierFiuu\Events\PaymentSucceeded;
 use OcGlobalTech\CashierFiuu\Events\WebhookHandled;
 use OcGlobalTech\CashierFiuu\Events\WebhookReceived;
 use OcGlobalTech\CashierFiuu\Fiuu;
-use OcGlobalTech\CashierFiuu\Subscription;
 use OcGlobalTech\CashierFiuu\Transaction;
 
 /**
@@ -102,46 +99,9 @@ class WebhookController extends Controller
      */
     protected function apply(Transaction $transaction, string $status, array $payload): void
     {
-        if ($status === Transaction::STATUS_PENDING) {
-            return;
-        }
-
-        if ($status === Transaction::STATUS_FAILED) {
-            $transaction->markAsFailed($payload);
-
-            $transaction->subscription?->recordFailedPayment($transaction);
-
-            PaymentFailed::dispatch($transaction);
-
-            return;
-        }
-
-        $this->storeToken($transaction, $payload);
-
-        $transaction->markAsPaid($payload);
-
-        $subscription = $transaction->subscription;
-
-        if ($subscription) {
-            $subscription->hasBegun($transaction)
-                ? $subscription->recordSuccessfulPayment($transaction)
-                : $subscription->recordFirstPayment($transaction);
-        }
-
-        PaymentSucceeded::dispatch($transaction);
-    }
-
-    /**
-     * Save the card token Fiuu returns in extraP on a successful payment.
-     *
-     * This is the only moment a token is ever handed over, so missing it
-     * means the customer must pay through the hosted page again.
-     *
-     * @param  array<string, mixed>  $payload
-     */
-    protected function storeToken(Transaction $transaction, array $payload): void
-    {
-        $transaction->storeToken($this->extraP($payload));
+        // A successful payment's extraP is the only moment Fiuu hands over a
+        // card token, so missing it means paying on the hosted page again.
+        $transaction->settle($status, $payload, $this->extraP($payload));
     }
 
     /**

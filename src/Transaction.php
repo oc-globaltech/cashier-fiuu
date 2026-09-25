@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use OcGlobalTech\CashierFiuu\Exceptions\FiuuRequestFailed;
 
 /**
@@ -159,10 +161,70 @@ class Transaction extends Model
             'channel' => $payload['channel'] ?? $this->channel,
             'error_code' => $payload['error_code'] ?? $this->error_code,
             'error_description' => $reason ?: ($payload['error_desc'] ?? $this->error_description),
-            'payload' => $payload ?: $this->payload,
+            // Merged, so the swap_from marker charge() stored survives until
+            // recordFailedPayment() reads it. An incoming one is never trusted:
+            // webhook fields outside the signature are the sender's to choose.
+            'payload' => array_merge($this->payload ?? [], Arr::except($payload, 'swap_from')),
         ])->save();
 
         return $this;
+    }
+
+    /**
+     * Apply the outcome Fiuu reported, together with everything it implies.
+     *
+     * The webhook, its retries and the renewal command's requery can all
+     * report one payment. The row is re-read under a lock and the transition
+     * commits as a whole, so it is applied once, and a failure half way rolls
+     * back to pending for Fiuu's retry. A paid row is final: money comes back
+     * through a refund or void, never a late failure notice.
+     *
+     * Listeners run inside the transaction; one that throws undoes the
+     * transition. Queue slow fulfilment work rather than doing it inline.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $card  where Fiuu put the tokenized card
+     */
+    public function settle(string $status, array $payload = [], array $card = [], ?string $reason = null): bool
+    {
+        if ($status === static::STATUS_PENDING) {
+            return false;
+        }
+
+        return DB::transaction(function () use ($status, $payload, $card, $reason) {
+            $fresh = $this->newQuery()->lockForUpdate()->find($this->getKey());
+
+            if (! $fresh || $fresh->status === $status || $fresh->paid()) {
+                return false;
+            }
+
+            $this->setRawAttributes($fresh->getAttributes(), true);
+            $this->unsetRelations();
+
+            if ($status === static::STATUS_FAILED) {
+                $this->markAsFailed($payload, $reason);
+
+                $this->subscription?->recordFailedPayment($this);
+
+                Events\PaymentFailed::dispatch($this);
+
+                return true;
+            }
+
+            $this->storeToken($card);
+
+            $this->markAsPaid($payload);
+
+            if ($subscription = $this->subscription) {
+                $subscription->hasBegun($this)
+                    ? $subscription->recordSuccessfulPayment($this)
+                    : $subscription->recordFirstPayment($this);
+            }
+
+            Events\PaymentSucceeded::dispatch($this);
+
+            return true;
+        });
     }
 
     /**

@@ -121,7 +121,11 @@ class Cashier
             return call_user_func(static::$orderIdGenerator, $owner, $purpose);
         }
 
-        return substr($purpose.'-'.$owner->getKey().'-'.bin2hex(random_bytes(8)), 0, 40);
+        // Fiuu caps order IDs at 40 characters. Only the key is shortened: the
+        // random suffix is what keeps two orders for one owner apart.
+        $prefix = substr($purpose.'-'.$owner->getKey(), 0, 23);
+
+        return $prefix.'-'.bin2hex(random_bytes(8));
     }
 
     /**

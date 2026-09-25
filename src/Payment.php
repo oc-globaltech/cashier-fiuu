@@ -51,7 +51,7 @@ class Payment
     }
 
     /**
-     * Validate the payment state, throwing if it requires action.
+     * Validate the payment state, throwing unless it was paid.
      *
      * @throws IncompletePayment
      */
@@ -63,6 +63,10 @@ class Payment
 
         if ($this->isPending()) {
             throw IncompletePayment::pending($this->transaction);
+        }
+
+        if ($this->isFailed()) {
+            throw IncompletePayment::failed($this->transaction);
         }
 
         return $this;

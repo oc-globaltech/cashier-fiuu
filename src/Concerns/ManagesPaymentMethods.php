@@ -37,6 +37,8 @@ trait ManagesPaymentMethods
             'fiuu_card_last_four' => $extraP['cclast4'] ?? null,
         ])->save();
 
+        $this->syncSubscriptionTokens();
+
         return new PaymentMethod($this);
     }
 
@@ -75,5 +77,17 @@ trait ManagesPaymentMethods
             'fiuu_card_brand' => null,
             'fiuu_card_last_four' => null,
         ])->save();
+
+        $this->syncSubscriptionTokens();
+    }
+
+    /**
+     * Subscriptions keep their own copy of the token, which renewals charge
+     * first, so it has to follow the customer's card or a removed card would
+     * go on being billed.
+     */
+    protected function syncSubscriptionTokens(): void
+    {
+        $this->subscriptions()->reorder()->update(['fiuu_token' => $this->fiuu_token]);
     }
 }

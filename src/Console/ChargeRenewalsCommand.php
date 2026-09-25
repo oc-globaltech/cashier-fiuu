@@ -5,9 +5,6 @@ namespace OcGlobalTech\CashierFiuu\Console;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use OcGlobalTech\CashierFiuu\Cashier;
-use OcGlobalTech\CashierFiuu\Events\PaymentFailed;
-use OcGlobalTech\CashierFiuu\Events\PaymentSucceeded;
-use OcGlobalTech\CashierFiuu\Fiuu;
 use OcGlobalTech\CashierFiuu\Subscription;
 use OcGlobalTech\CashierFiuu\Transaction;
 use Throwable;
@@ -46,18 +43,16 @@ class ChargeRenewalsCommand extends Command
 
         (new $model)->newQuery()
             ->dueForRenewal()
+            ->orderBy('next_billing_at')
             ->limit((int) $this->option('limit'))
             ->get()
             ->each(function (Subscription $subscription) use (&$charged) {
-                // A charge already awaiting Fiuu's answer is this subscription's
-                // lock: without it a lost callback would be billed twice.
-                if ($subscription->hasPendingPayment()) {
-                    return;
-                }
-
+                // renew() skips a subscription with a charge already awaiting
+                // Fiuu, or one a webhook settled since this list was read.
                 try {
-                    $subscription->charge();
-                    $charged++;
+                    if ($subscription->renew()) {
+                        $charged++;
+                    }
                 } catch (Throwable $e) {
                     $this->error("Subscription {$subscription->getKey()}: {$e->getMessage()}");
                 }
@@ -72,7 +67,8 @@ class ChargeRenewalsCommand extends Command
      * A customer who closed the hosted page leaves a row Fiuu may have no
      * record of at all, so requerying it can never resolve it. Left alone it
      * would be polled on every run, and a stuck recurring row would hold the
-     * renewal lock open forever.
+     * renewal lock open forever. Each gets one last requery first, since the
+     * regular pass may never have reached it.
      */
     protected function writeOffAbandoned(): void
     {
@@ -84,13 +80,13 @@ class ChargeRenewalsCommand extends Command
             ->pending()
             ->where('type', '!=', Transaction::TYPE_REFUND)
             ->where('created_at', '<=', $cutoff)
+            ->oldest()
+            ->limit((int) $this->option('limit'))
             ->get()
             ->each(function (Transaction $transaction) {
-                $transaction->markAsFailed([], 'Abandoned: Fiuu never confirmed this payment.');
+                $this->reconcile($transaction);
 
-                $transaction->subscription?->recordFailedPayment($transaction);
-
-                PaymentFailed::dispatch($transaction);
+                $transaction->settle(Transaction::STATUS_FAILED, [], [], 'Abandoned: Fiuu never confirmed this payment.');
             });
     }
 
@@ -119,23 +115,24 @@ class ChargeRenewalsCommand extends Command
 
         // Checkouts are reconciled too: an abandoned hosted page never calls
         // back, and without this its subscription stays incomplete forever.
-        (new $model)->newQuery()
-            ->pending()
-            ->where('created_at', '<=', $cutoff)
-            ->oldest()
-            ->limit((int) $this->option('limit'))
-            ->get()
-            ->each(fn (Transaction $transaction) => $this->reconcile($transaction));
+        // Refunds get their own pass, as they take days and would otherwise
+        // crowd charges out of the batch until those were written off.
+        foreach ([true, false] as $refunds) {
+            (new $model)->newQuery()
+                ->pending()
+                ->where('type', $refunds ? '=' : '!=', Transaction::TYPE_REFUND)
+                ->where('created_at', '<=', $cutoff)
+                ->oldest()
+                ->limit((int) $this->option('limit'))
+                ->get()
+                ->each(fn (Transaction $transaction) => $refunds
+                    ? $this->reconcileRefund($transaction)
+                    : $this->reconcile($transaction));
+        }
     }
 
     protected function reconcile(Transaction $transaction): void
     {
-        if ($transaction->type === Transaction::TYPE_REFUND) {
-            $this->reconcileRefund($transaction);
-
-            return;
-        }
-
         try {
             $result = $transaction->requery();
         } catch (Throwable $e) {
@@ -146,39 +143,13 @@ class ChargeRenewalsCommand extends Command
 
         $status = Transaction::statusFor((string) ($result['StatCode'] ?? ''));
 
-        if ($status === Transaction::STATUS_PENDING || $status === $transaction->status) {
-            return;
-        }
-
-        if ($status === Transaction::STATUS_FAILED) {
-            $transaction->markAsFailed([
-                'error_code' => $result['ErrorCode'] ?? null,
-                'error_desc' => $result['ErrorDesc'] ?? null,
-                'channel' => $result['Channel'] ?? null,
-            ]);
-
-            $transaction->subscription?->recordFailedPayment($transaction);
-
-            PaymentFailed::dispatch($transaction);
-
-            return;
-        }
-
-        $transaction->storeToken($result);
-
-        $transaction->markAsPaid([
+        $transaction->settle($status, $status === Transaction::STATUS_FAILED ? [
+            'error_code' => $result['ErrorCode'] ?? null,
+            'error_desc' => $result['ErrorDesc'] ?? null,
+            'channel' => $result['Channel'] ?? null,
+        ] : [
             'tranID' => $result['TranID'] ?? $transaction->fiuu_id,
             'channel' => $result['Channel'] ?? null,
-        ]);
-
-        $subscription = $transaction->subscription;
-
-        if ($subscription) {
-            $subscription->hasBegun($transaction)
-                ? $subscription->recordSuccessfulPayment($transaction)
-                : $subscription->recordFirstPayment($transaction);
-        }
-
-        PaymentSucceeded::dispatch($transaction);
+        ], $result);
     }
 }
