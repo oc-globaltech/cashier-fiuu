@@ -883,6 +883,9 @@ behaviour is deliberately stricter:
   happens in one locked database transaction, so a retry cannot apply it
   twice and a failure half way rolls it back. See [Events](#events) for what
   that means for listeners.
+- A renewal Fiuu confirms after it was written off, and after the
+  subscription was canceled for it, revives the subscription: the money was
+  taken. A cancellation still inside its grace period is left alone.
 - Before writing off an abandoned charge, `cashier:renew` asks Fiuu about it
   one last time. Pending refunds are reconciled in their own pass.
 - The default order ID keeps its random suffix for long (UUID) customer keys.

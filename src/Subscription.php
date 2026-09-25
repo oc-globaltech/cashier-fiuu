@@ -715,8 +715,12 @@ class Subscription extends Model
      */
     public function recordSuccessfulPayment(Transaction $transaction): static
     {
+        // A charge written off and then confirmed after all took the money,
+        // so the subscription it ended comes back. A cancellation still in
+        // its grace period is the customer's own and stands.
         $this->forceFill([
             'fiuu_status' => static::STATUS_ACTIVE,
+            'ends_at' => $this->ended() ? null : $this->ends_at,
         ])->save();
 
         $this->advanceBillingPeriod();

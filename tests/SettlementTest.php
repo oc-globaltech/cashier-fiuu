@@ -39,6 +39,19 @@ class SettlementTest extends TestCase
         ], $overrides));
     }
 
+    /** A subscription whose first payment cleared a month ago. */
+    protected function paidSubscription(): Subscription
+    {
+        $subscription = $this->subscription();
+
+        $subscription->transactions()->create([
+            'user_id' => $subscription->user_id, 'order_id' => 'sub-first', 'type' => Transaction::TYPE_CHECKOUT,
+            'status' => Transaction::STATUS_PAID, 'amount' => 2900, 'currency' => 'MYR',
+        ])->forceFill(['created_at' => now()->subMonth()])->save();
+
+        return $subscription;
+    }
+
     protected function notify(Transaction $transaction, string $status = '00', array $extra = [])
     {
         $payload = array_merge([
@@ -333,6 +346,36 @@ class SettlementTest extends TestCase
         $this->assertTrue($renewal->refresh()->paid());
         $this->assertTrue($subscription->refresh()->active());
         $this->assertFalse($subscription->pastDue());
+    }
+
+    public function test_a_payment_confirmed_after_the_write_off_revives_the_subscription(): void
+    {
+        $subscription = $this->paidSubscription();
+        $renewal = $this->pendingRenewal($subscription);
+
+        config()->set('cashier.max_retries', 1);
+        $renewal->settle(Transaction::STATUS_FAILED, [], [], 'Abandoned');
+        $this->assertTrue($subscription->refresh()->ended());
+
+        $this->notify($renewal)->assertOk();
+
+        $subscription->refresh();
+
+        $this->assertTrue($subscription->valid());
+        $this->assertTrue($subscription->next_billing_at->isFuture());
+        $this->assertTrue($subscription->owner->subscribed());
+    }
+
+    public function test_a_renewal_paid_during_the_grace_period_keeps_the_cancellation(): void
+    {
+        $subscription = $this->paidSubscription();
+        $renewal = $this->pendingRenewal($subscription);
+
+        $subscription->cancelAt(now()->addWeek());
+
+        $this->notify($renewal)->assertOk();
+
+        $this->assertTrue($subscription->refresh()->onGracePeriod());
     }
 
     public function test_swap_and_invoice_refuses_a_canceled_or_pending_subscription(): void
