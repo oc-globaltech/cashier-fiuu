@@ -94,17 +94,18 @@ php artisan cashier:check
 ```
 
 It reports your credentials, hosts, webhook routes and renewal schedule as
-pass, warn or fail rows, calls Fiuu once to prove the credentials are accepted,
-and exits non-zero if anything would stop a payment. Pass `--offline` to skip
-the call to Fiuu.
+pass, warn or fail rows, calls Fiuu to prove the merchant ID, verify key and
+secret key are accepted, and exits non-zero if anything would stop a payment. Pass `--offline` to skip
+the calls to Fiuu. A merchant ID Fiuu calls invalid usually means `FIUU_SANDBOX`
+points at the wrong portal; the check says which way to flip it.
 
 ### Versioning
 
-Cashier Fiuu follows semantic versioning. Releases are tagged `v1.3.1`, and each minor line keeps its own branch for maintenance:
+Cashier Fiuu follows semantic versioning. Releases are tagged `v1.3.2`, and each minor line keeps its own branch for maintenance:
 
 | Branch | Latest release | Laravel |
 | ------ | -------------- | ------- |
-| `1.3`  | `v1.3.1`       | 10 - 13 |
+| `1.3`  | `v1.3.2`       | 10 - 13 |
 | `1.2`  | `v1.2.0`       | 10 - 13 |
 | `1.1`  | `v1.1.0`       | 10 - 13 |
 | `1.0`  | `v1.0.1`       | 10 - 13 |
@@ -165,6 +166,7 @@ Cashier registers three routes for you:
 | `POST /fiuu/notify` | Server to server notification. **This is what settles a payment.** |
 | `POST /fiuu/callback` | Deferred status changes and recurring results. |
 | `GET|POST /fiuu/return` | Browser redirect back from the payment page. Redirects only; never trusted. |
+| `GET /fiuu/notify`, `GET /fiuu/callback` | Answers `200 OK` for the merchant portal's URL "Check" button. Settles nothing. |
 
 Register the `notify` and `callback` URLs in your Fiuu merchant portal. Cashier verifies every notification's `skey` and refuses anything that does not match, and it acknowledges each webhook with `CBTOKEN:MPSTATOK` so Fiuu stops retrying.
 
@@ -646,7 +648,13 @@ $transaction->paid();
 $transaction->pending();
 $transaction->failed();
 $transaction->requery();   // Ask Fiuu for the authoritative status.
+$transaction->reconcile(); // Requery and apply the answer, as cashier:renew does.
 ```
+
+`reconcile()` is what an app polling for a payment it just started should
+call. Until `FIUU_REQUERY_AFTER` has passed, a refusal that Fiuu gave no
+transaction ID leaves the row pending, since it only means the customer has
+not paid yet.
 
 Transaction types are `checkout`, `recurring`, `charge` and `verification`.
 
@@ -856,6 +864,20 @@ FIUU_SANDBOX_RECURRING_URL=
 FIUU_SANDBOX_CARD_URL=
 FIUU_SANDBOX_CARD_API_URL=
 ```
+
+## Upgrading to 1.3.2
+
+Nothing to migrate and nothing breaking.
+
+- `Transaction::reconcile()` requeries a transaction and applies the answer,
+  as `cashier:renew` does. Call it instead of copying the command's code. A
+  refusal with no transaction ID, on a row younger than `FIUU_REQUERY_AFTER`,
+  leaves the row pending.
+- `GET /fiuu/notify` and `GET /fiuu/callback` answer `200 OK`, so the merchant
+  portal's URL check passes. If you added your own GET routes for this, you
+  can remove them.
+- `cashier:check` also tests the secret key, and suggests flipping
+  `FIUU_SANDBOX` when Fiuu calls the merchant ID invalid.
 
 ## Upgrading to 1.3.1
 

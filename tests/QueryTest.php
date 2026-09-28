@@ -87,6 +87,30 @@ class QueryTest extends TestCase
     }
 
     /**
+     * An app polling right after registering an order must not fail it while
+     * the customer is still on the payment page and Fiuu has no payment yet.
+     */
+    public function test_reconciling_a_young_order_with_no_payment_keeps_it_pending(): void
+    {
+        $refused = fn (string $tranId) => Http::response([
+            'StatCode' => '11', 'OrderID' => 'ord-1', 'Amount' => '50.00',
+            'Domain' => self::MERCHANT, 'TranID' => $tranId,
+            'VrfKey' => md5('50.00'.self::SECRET.self::MERCHANT.'ord-1'.'11'),
+        ]);
+
+        Http::fakeSequence()->pushResponse($refused(''))->pushResponse($refused('77001'));
+
+        $transaction = $this->pendingCheckout();
+
+        $this->assertFalse($transaction->reconcile());
+        $this->assertTrue($transaction->refresh()->pending());
+
+        // A refusal Fiuu gave a transaction ID is a real decline.
+        $this->assertTrue($transaction->reconcile());
+        $this->assertTrue($transaction->refresh()->failed());
+    }
+
+    /**
      * A successful requery is the last chance to capture the card token.
      */
     public function test_a_reconciled_checkout_stores_the_card_token(): void

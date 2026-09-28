@@ -10,4 +10,8 @@ Route::group(['prefix' => config('cashier.path'), 'as' => 'cashier.'], function 
     // The server to server webhooks that actually settle a payment.
     Route::post('notify', [WebhookController::class, 'notify'])->name('notify');
     Route::post('callback', [WebhookController::class, 'callback'])->name('callback');
+
+    // The merchant portal's "Check" button probes these URLs with a bare GET
+    // and reports anything but a 2xx as broken. A GET settles nothing.
+    Route::get('{endpoint}', fn () => 'OK')->whereIn('endpoint', ['notify', 'callback']);
 });

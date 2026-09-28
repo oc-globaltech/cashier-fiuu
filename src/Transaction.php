@@ -447,6 +447,38 @@ class Transaction extends Model
         return $result;
     }
 
+    /**
+     * Requery Fiuu and apply what it says, as the renewal command does.
+     *
+     * Safe to call while the customer is still on the payment page: until
+     * cashier.requery_after has passed, a refusal with no transaction ID only
+     * means Fiuu has no payment yet, so the row stays pending instead of
+     * failing an order the customer is about to pay.
+     *
+     * @return bool whether the row changed
+     */
+    public function reconcile(): bool
+    {
+        $result = $this->requery();
+
+        $status = static::statusFor((string) ($result['StatCode'] ?? ''));
+
+        $young = $this->created_at?->gt(\Carbon\Carbon::now()->subMinutes((int) config('cashier.requery_after', 120)));
+
+        if ($status === static::STATUS_FAILED && empty($result['TranID']) && $young) {
+            return false;
+        }
+
+        return $this->settle($status, $status === static::STATUS_FAILED ? [
+            'error_code' => $result['ErrorCode'] ?? null,
+            'error_desc' => $result['ErrorDesc'] ?? null,
+            'channel' => $result['Channel'] ?? null,
+        ] : [
+            'tranID' => $result['TranID'] ?? $this->fiuu_id,
+            'channel' => $result['Channel'] ?? null,
+        ], $result);
+    }
+
     public function amount(): string
     {
         return Cashier::formatAmount($this->amount, $this->currency);

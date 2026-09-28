@@ -69,11 +69,44 @@ class CheckCommand extends Command
             $result = $fiuu->channels();
 
             isset($result['error_desc'])
-                ? $this->bad('Fiuu credentials', (string) $result['error_desc'])
+                ? $this->bad('Fiuu credentials', $result['error_desc'].$this->modeHint((string) $result['error_desc']))
                 : $this->ok('Fiuu credentials', 'accepted by '.parse_url($fiuu->payUrl(), PHP_URL_HOST));
         } catch (Throwable $e) {
             $this->bad('Fiuu credentials', $e->getMessage());
         }
+
+        if ($this->failed) {
+            return;
+        }
+
+        // The call above only proves the verify key. Every webhook and requery
+        // is checked with the secret key, so prove that too, read only.
+        try {
+            $result = $fiuu->channelSuccessRate();
+
+            // ponytail: Fiuu does not document this endpoint's error shape; a
+            // warning, not a failure, until a wrong-key reply has been seen.
+            isset($result['error_desc']) || isset($result['error_code'])
+                ? $this->caution('cashier.secret_key', 'Fiuu refused a secret-key signed request: '.($result['error_desc'] ?? $result['error_code']).'. Compare FIUU_SECRET_KEY with the portal\'s Transaction Settings')
+                : $this->ok('cashier.secret_key', 'accepted by '.parse_url($fiuu->apiUrl(), PHP_URL_HOST));
+        } catch (Throwable $e) {
+            $this->caution('cashier.secret_key', 'could not be checked: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * A merchant ID only exists on one of Fiuu's two portals, and asking the
+     * other one reads as "invalid merchant" rather than "wrong host".
+     */
+    protected function modeHint(string $error): string
+    {
+        if (stripos($error, 'merchant') === false) {
+            return '';
+        }
+
+        return config('cashier.sandbox')
+            ? '. If this merchant is on portal.fiuu.com rather than sandbox-portal.fiuu.com, set FIUU_SANDBOX=false'
+            : '. If this merchant is on sandbox-portal.fiuu.com, set FIUU_SANDBOX=true';
     }
 
     protected function hosts(Fiuu $fiuu): void

@@ -177,6 +177,31 @@ class DeveloperExperienceTest extends TestCase
         $this->artisan('cashier:check', ['--offline' => true])->assertExitCode(0);
     }
 
+    public function test_the_check_command_suggests_the_other_mode_for_an_unknown_merchant(): void
+    {
+        config()->set('cashier.sandbox', true);
+
+        \Illuminate\Support\Facades\Http::fake(['*' => ['error_code' => 'CS04', 'error_desc' => 'Invalid merchantID']]);
+
+        $this->artisan('cashier:check')
+            ->expectsOutputToContain('FIUU_SANDBOX=false')
+            ->assertExitCode(1);
+    }
+
+    public function test_the_check_command_warns_when_the_secret_key_is_refused(): void
+    {
+        app(\Illuminate\Console\Scheduling\Schedule::class)->command('cashier:renew')->hourly();
+
+        \Illuminate\Support\Facades\Http::fake([
+            '*channel_status.php' => ['creditAN' => 1],
+            '*OK-rate.php*' => ['error_code' => 'Q401', 'error_desc' => 'Invalid skey'],
+        ]);
+
+        $this->artisan('cashier:check')
+            ->expectsOutputToContain('FIUU_SECRET_KEY')
+            ->assertExitCode(0);
+    }
+
     public function test_the_subscribed_middleware_turns_away_a_customer_without_a_subscription(): void
     {
         \Illuminate\Support\Facades\Route::get('/reports', fn () => 'ok')

@@ -80,6 +80,12 @@ class WebhookTest extends TestCase
         Event::assertDispatched(PaymentSucceeded::class);
     }
 
+    public function test_the_portal_probe_gets_a_200_and_settles_nothing(): void
+    {
+        $this->get('/fiuu/notify')->assertOk();
+        $this->get('/fiuu/callback')->assertOk();
+    }
+
     public function test_a_tampered_notification_is_refused_and_not_acknowledged(): void
     {
         $user = $this->createUser();

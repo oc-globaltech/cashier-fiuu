@@ -134,22 +134,9 @@ class ChargeRenewalsCommand extends Command
     protected function reconcile(Transaction $transaction): void
     {
         try {
-            $result = $transaction->requery();
+            $transaction->reconcile();
         } catch (Throwable $e) {
-            $this->error("Requery of order {$transaction->order_id} failed: {$e->getMessage()}");
-
-            return;
+            $this->error("Reconciling order {$transaction->order_id} failed: {$e->getMessage()}");
         }
-
-        $status = Transaction::statusFor((string) ($result['StatCode'] ?? ''));
-
-        $transaction->settle($status, $status === Transaction::STATUS_FAILED ? [
-            'error_code' => $result['ErrorCode'] ?? null,
-            'error_desc' => $result['ErrorDesc'] ?? null,
-            'channel' => $result['Channel'] ?? null,
-        ] : [
-            'tranID' => $result['TranID'] ?? $transaction->fiuu_id,
-            'channel' => $result['Channel'] ?? null,
-        ], $result);
     }
 }
