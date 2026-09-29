@@ -4,6 +4,8 @@ includes:
 
 parameters:
     level: 5
+    # A dependency update that fixes a baselined error must not fail the build.
+    reportUnmatchedIgnoredErrors: false
     paths:
         - src
         # Uses Billable, so the customer traits are analysed too.

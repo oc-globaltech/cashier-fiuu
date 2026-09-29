@@ -14,6 +14,12 @@ abstract class TestCase extends Orchestra
 {
     protected function setUp(): void
     {
+        // CI freezes the clock on an awkward date to catch tests that only
+        // pass because time moves on, or because today is not a month end.
+        if ($now = getenv('CASHIER_TEST_NOW')) {
+            \Carbon\Carbon::setTestNow($now);
+        }
+
         parent::setUp();
 
         Cashier::useCustomerModel(User::class);

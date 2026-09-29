@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   tests:
-    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} (${{ matrix.stability }})
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} (${{ matrix.stability }})${{ matrix.now && ' frozen clock' || '' }}
     runs-on: ubuntu-latest
 
     strategy:
@@ -31,6 +31,9 @@ jobs:
           - { php: '8.4', laravel: '11', testbench: '9', stability: prefer-stable, eol: true }
           - { php: '8.4', laravel: '12', testbench: '10', stability: prefer-stable }
           - { php: '8.5', laravel: '13', testbench: '11', stability: prefer-stable }
+          # Frozen on a leap day at a month end, so date maths and tests that
+          # rely on the clock ticking fail here rather than on some future Monday.
+          - { php: '8.5', laravel: '13', testbench: '11', stability: prefer-stable, now: '2028-02-29 23:59:59' }
 
     steps:
       - uses: actions/checkout@v5
@@ -55,6 +58,8 @@ jobs:
           composer update --${{ matrix.stability }} --prefer-dist --no-interaction --no-progress
 
       - run: vendor/bin/phpunit
+        env:
+          CASHIER_TEST_NOW: ${{ matrix.now }}
 
   analyse:
     name: Static analysis
