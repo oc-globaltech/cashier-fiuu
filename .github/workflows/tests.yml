@@ -26,9 +26,9 @@ jobs:
       matrix:
         include:
           # Proves the lower bounds in composer.json actually work.
-          - { php: '8.1', laravel: '10', testbench: '8', stability: prefer-lowest }
-          - { php: '8.3', laravel: '10', testbench: '8', stability: prefer-stable }
-          - { php: '8.4', laravel: '11', testbench: '9', stability: prefer-stable }
+          - { php: '8.1', laravel: '10', testbench: '8', stability: prefer-lowest, eol: true }
+          - { php: '8.3', laravel: '10', testbench: '8', stability: prefer-stable, eol: true }
+          - { php: '8.4', laravel: '11', testbench: '9', stability: prefer-stable, eol: true }
           - { php: '8.4', laravel: '12', testbench: '10', stability: prefer-stable }
           - { php: '8.5', laravel: '13', testbench: '11', stability: prefer-stable }
 
@@ -40,6 +40,13 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: intl, pdo_sqlite
           coverage: none
+
+      # Every Laravel 10 and 11 release carries advisories that will never be
+      # patched, and Composer refuses them. Only this test run installs them;
+      # the package still supports those versions until 1.4 drops them.
+      - name: Allow end-of-life Laravel
+        if: matrix.eol
+        run: composer config policy.advisories.block false
 
       # Testbench pins laravel/framework, which pins every illuminate/* package.
       - name: Install dependencies
