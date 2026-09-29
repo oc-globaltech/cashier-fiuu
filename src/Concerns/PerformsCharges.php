@@ -115,8 +115,6 @@ trait PerformsCharges
 
     /**
      * Refund one of this billable's transactions.
-     *
-     * @return array<string, mixed>
      */
     public function refund(string $orderId, ?int $amount = null): Transaction
     {
