@@ -27,6 +27,16 @@ class AuthorizationTest extends TestCase
         $this->assertSame('AUTH', $checkout->payload()['tcctype']);
     }
 
+    public function test_3ds_returns_the_customer_to_cashier_by_default(): void
+    {
+        Http::fake(['*' => Http::response(['StatCode' => '00'])]);
+
+        $this->heldTransaction()->asPayment()->authenticate();
+
+        Http::assertSent(fn (Request $request) => str_contains($request->url(), '/RMS/API/Card/authentication.php')
+            && $request['ReturnURL'] === route('cashier.return'));
+    }
+
     public function test_capturing_an_authorization_turns_it_into_a_charge(): void
     {
         Http::fake(['*' => Http::response(['StatCode' => '00'])]);

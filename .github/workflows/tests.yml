@@ -1,0 +1,81 @@
+name: tests
+
+on:
+  push:
+    branches: ['1.*']
+  pull_request:
+  workflow_dispatch:
+  # A library's CI mostly goes red from upstream releases, not from its own commits.
+  schedule:
+    - cron: '0 1 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} (${{ matrix.stability }})${{ matrix.now && ' frozen clock' || '' }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Proves the lower bounds in composer.json actually work.
+          - { php: '8.1', laravel: '10', testbench: '8', stability: prefer-lowest, eol: true }
+          - { php: '8.3', laravel: '10', testbench: '8', stability: prefer-stable, eol: true }
+          - { php: '8.4', laravel: '11', testbench: '9', stability: prefer-stable, eol: true }
+          - { php: '8.4', laravel: '12', testbench: '10', stability: prefer-stable }
+          - { php: '8.5', laravel: '13', testbench: '11', stability: prefer-stable }
+          # Frozen on a leap day at a month end, so date maths and tests that
+          # rely on the clock ticking fail here rather than on some future Monday.
+          - { php: '8.5', laravel: '13', testbench: '11', stability: prefer-stable, now: '2028-02-29 23:59:59' }
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: intl, pdo_sqlite
+          coverage: none
+
+      # Every Laravel 10 and 11 release carries advisories that will never be
+      # patched, and Composer refuses them. Only this test run installs them,
+      # to keep checking the versions composer.json still claims.
+      - name: Allow end-of-life Laravel
+        if: matrix.eol
+        run: composer config policy.advisories.block false
+
+      # Testbench pins laravel/framework, which pins every illuminate/* package.
+      - name: Install dependencies
+        run: |
+          composer require "orchestra/testbench:^${{ matrix.testbench }}.0" --dev --no-update --no-interaction
+          composer update --${{ matrix.stability }} --prefer-dist --no-interaction --no-progress
+
+      - run: vendor/bin/phpunit
+        env:
+          CASHIER_TEST_NOW: ${{ matrix.now }}
+
+  analyse:
+    name: Static analysis
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: intl
+          coverage: none
+
+      - run: composer validate --strict
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - run: composer analyse -- --no-progress --error-format=github

@@ -255,7 +255,7 @@ class Subscription extends Model
         return $this->recurring() &&
             ! $this->incomplete() &&
             $this->next_billing_at &&
-            $this->next_billing_at->isPast();
+            $this->next_billing_at->lte(Carbon::now());
     }
 
     public function scopeDueForRenewal(Builder $query): void
@@ -280,7 +280,8 @@ class Subscription extends Model
             $from ? Carbon::instance($from) : ($this->next_billing_at ?: Carbon::now())
         );
 
-        while ($next->isPast()) {
+        // Inclusive, like scopeDueForRenewal(): a date equal to now is due.
+        while ($next->lte(Carbon::now())) {
             $next = $this->addInterval($next);
         }
 

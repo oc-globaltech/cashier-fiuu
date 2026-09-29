@@ -306,8 +306,6 @@ class Transaction extends Model
      * Refund this transaction, in full or in part.
      *
      * The amount is in minor units and defaults to whatever is left unrefunded.
-     *
-     * @return array<string, mixed>
      */
     public function refund(?int $amount = null): static
     {

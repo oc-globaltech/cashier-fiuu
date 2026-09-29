@@ -85,7 +85,7 @@ class Payment
         $fiuu = app(Fiuu::class);
 
         $returnUrl = $options['return_url']
-            ?? (\Illuminate\Support\Facades\Route::has('cashier.return') ? URL::route('cashier.return') : '/');
+            ?? (\Illuminate\Support\Facades\Route::has('cashier.return') ? route('cashier.return') : '/');
 
         return $fiuu->authenticateCard(
             (string) $this->transaction->order_id,
