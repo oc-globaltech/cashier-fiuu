@@ -42,8 +42,8 @@ jobs:
           coverage: none
 
       # Every Laravel 10 and 11 release carries advisories that will never be
-      # patched, and Composer refuses them. Only this test run installs them;
-      # the package still supports those versions until 1.4 drops them.
+      # patched, and Composer refuses them. Only this test run installs them,
+      # to keep checking the versions composer.json still claims.
       - name: Allow end-of-life Laravel
         if: matrix.eol
         run: composer config policy.advisories.block false
