@@ -1,5 +1,7 @@
 # Cashier Fiuu
 
+[![tests](https://github.com/oc-globaltech/cashier-fiuu/actions/workflows/tests.yml/badge.svg)](https://github.com/oc-globaltech/cashier-fiuu/actions/workflows/tests.yml)
+
 Cashier Fiuu provides an expressive, fluent interface to [Fiuu's](https://fiuu.com) payment and recurring billing services. It handles almost all of the boilerplate subscription billing code you are dreading writing. In addition to basic subscription management, Cashier can handle trials, plan swaps, subscription "quantities", cancellation grace periods, and refunds.
 
 It is modelled directly on [Laravel Cashier (Stripe)](https://laravel.com/docs/billing), so if you know that package you already know this one.
@@ -775,7 +777,12 @@ payload and how its `skey` is computed. Run it with:
 
 ```bash
 composer test
+composer analyse   # Larastan, level 5
 ```
+
+CI runs both on every push and pull request, across Laravel 10 to 13, and
+once with the lowest versions `composer.json` allows. Existing type noise is
+kept in `phpstan-baseline.neon`; new code should not add to it.
 
 ## The Fiuu API
 

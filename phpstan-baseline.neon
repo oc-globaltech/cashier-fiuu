@@ -1,0 +1,367 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Call to an undefined static method Illuminate\\Database\\Eloquent\\Model\:\:withTrashed\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: src/Cashier.php
+
+		-
+			message: '#^Static property OcGlobalTech\\CashierFiuu\\Cashier\:\:\$customerModel \(class\-string\<Illuminate\\Database\\Eloquent\\Model\>\) does not accept default value of type string\.$#'
+			identifier: property.defaultValue
+			count: 1
+			path: src/Cashier.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 2
+			path: src/Cashier.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:fiuuAddress\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Checkout.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:fiuuEmail\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Checkout.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:fiuuName\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Checkout.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:fiuuPhone\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Checkout.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Checkout.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 3
+			path: src/Exceptions/FiuuRequestFailed.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 3
+			path: src/Exceptions/IncompletePayment.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Exceptions/InvalidAmount.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Exceptions/InvalidConfiguration.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Exceptions/InvalidCustomer.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Exceptions/InvalidPaymentMethod.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Exceptions/PaymentFailed.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 4
+			path: src/Exceptions/SubscriptionUpdateFailure.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Foundation\\Auth\\User\:\:subscribed\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Http/Middleware/Subscribed.php
+
+		-
+			message: '#^Method OcGlobalTech\\CashierFiuu\\Invoice\:\:refunds\(\) should return Illuminate\\Support\\Collection\<int, OcGlobalTech\\CashierFiuu\\Transaction\> but returns Illuminate\\Database\\Eloquent\\Collection\<int, Illuminate\\Database\\Eloquent\\Model\>\.$#'
+			identifier: return.type
+			count: 1
+			path: src/Invoice.php
+
+		-
+			message: '#^Method OcGlobalTech\\CashierFiuu\\Invoice\:\:subscription\(\) should return OcGlobalTech\\CashierFiuu\\Subscription\|null but returns Illuminate\\Database\\Eloquent\\Model\|null\.$#'
+			identifier: return.type
+			count: 1
+			path: src/Invoice.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$fiuu_token\.$#'
+			identifier: property.notFound
+			count: 1
+			path: src/Payment.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:hasFiuuToken\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Payment.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$fiuu_card_brand\.$#'
+			identifier: property.notFound
+			count: 1
+			path: src/PaymentMethod.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$fiuu_card_last_four\.$#'
+			identifier: property.notFound
+			count: 1
+			path: src/PaymentMethod.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$fiuu_token\.$#'
+			identifier: property.notFound
+			count: 1
+			path: src/PaymentMethod.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$fiuu_token\.$#'
+			identifier: property.notFound
+			count: 2
+			path: src/Subscription.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$order_id\.$#'
+			identifier: property.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Builder\:\:canceled\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Builder\:\:notCanceled\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Builder\:\:notOnTrial\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:fiuuEmail\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:fiuuName\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:fiuuPhone\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Relations\\HasMany\:\:failed\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Relations\\HasMany\:\:paid\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: src/Subscription.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Relations\\HasMany\:\:pending\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Method OcGlobalTech\\CashierFiuu\\Subscription\:\:latestTransaction\(\) should return OcGlobalTech\\CashierFiuu\\Transaction\|null but returns Illuminate\\Database\\Eloquent\\Model\|null\.$#'
+			identifier: return.type
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Method OcGlobalTech\\CashierFiuu\\Subscription\:\:startCharge\(\) should return OcGlobalTech\\CashierFiuu\\Transaction\|null but returns Illuminate\\Database\\Eloquent\\Model\.$#'
+			identifier: return.type
+			count: 1
+			path: src/Subscription.php
+
+		-
+			message: '#^Parameter \#1 \$transaction of method OcGlobalTech\\CashierFiuu\\Subscription\:\:failCharge\(\) expects OcGlobalTech\\CashierFiuu\\Transaction, Illuminate\\Database\\Eloquent\\Model given\.$#'
+			identifier: argument.type
+			count: 2
+			path: src/Subscription.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$fiuu_token\.$#'
+			identifier: property.notFound
+			count: 1
+			path: src/SubscriptionBuilder.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:hasFiuuToken\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/SubscriptionBuilder.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:subscriptions\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/SubscriptionBuilder.php
+
+		-
+			message: '#^Parameter \#2 \$transaction of static method OcGlobalTech\\CashierFiuu\\Checkout\:\:make\(\) expects OcGlobalTech\\CashierFiuu\\Transaction, Illuminate\\Database\\Eloquent\\Model given\.$#'
+			identifier: argument.type
+			count: 1
+			path: src/SubscriptionBuilder.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$order_id\.$#'
+			identifier: property.notFound
+			count: 1
+			path: src/Transaction.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:hasBegun\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Transaction.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:markAsFailed\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Transaction.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:recordFailedPayment\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Transaction.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:recordFirstPayment\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Transaction.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:recordSuccessfulPayment\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Transaction.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:syncRefundedAmount\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Transaction.php
+
+		-
+			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$order_id\.$#'
+			identifier: property.notFound
+			count: 1
+			path: tests/TestCase.php
+
+		-
+			message: '#^Access to an undefined property OcGlobalTech\\CashierFiuu\\Tests\\User\:\:\$fiuu_token\.$#'
+			identifier: property.notFound
+			count: 7
+			path: tests/TestCase.php
+
+		-
+			message: '#^Access to an undefined property OcGlobalTech\\CashierFiuu\\Tests\\User\:\:\$trial_ends_at\.$#'
+			identifier: property.notFound
+			count: 3
+			path: tests/TestCase.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:markAsFailed\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: tests/TestCase.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Relations\\HasMany\:\:paid\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: tests/TestCase.php
+
+		-
+			message: '#^Method OcGlobalTech\\CashierFiuu\\Tests\\User\:\:charge\(\) should return OcGlobalTech\\CashierFiuu\\Transaction but returns Illuminate\\Database\\Eloquent\\Model\.$#'
+			identifier: return.type
+			count: 2
+			path: tests/TestCase.php
+
+		-
+			message: '#^Method OcGlobalTech\\CashierFiuu\\Tests\\User\:\:findTransaction\(\) should return OcGlobalTech\\CashierFiuu\\Transaction\|null but returns Illuminate\\Database\\Eloquent\\Model\|null\.$#'
+			identifier: return.type
+			count: 1
+			path: tests/TestCase.php
+
+		-
+			message: '#^Method OcGlobalTech\\CashierFiuu\\Tests\\User\:\:subscription\(\) should return OcGlobalTech\\CashierFiuu\\Subscription\|null but returns Illuminate\\Database\\Eloquent\\Model\|null\.$#'
+			identifier: return.type
+			count: 1
+			path: tests/TestCase.php
+
+		-
+			message: '#^Parameter \#1 \$callback of method Illuminate\\Support\\Collection\<int,Illuminate\\Database\\Eloquent\\Model\>\:\:sortBy\(\) expects array\<array\{string, ''asc''\|''desc''\|SortDirection\}\|\(callable\(Illuminate\\Database\\Eloquent\\Model, Illuminate\\Database\\Eloquent\\Model\)\: mixed\)\|\(callable\(Illuminate\\Database\\Eloquent\\Model, int\)\: mixed\)\|string\>\|\(callable\(Illuminate\\Database\\Eloquent\\Model, int\)\: mixed\)\|int\|string, Closure\(OcGlobalTech\\CashierFiuu\\Subscription\)\: bool given\.$#'
+			identifier: argument.type
+			count: 1
+			path: tests/TestCase.php
+
+		-
+			message: '#^Parameter \#1 \$key of method Illuminate\\Database\\Eloquent\\Collection\<int,Illuminate\\Database\\Eloquent\\Model\>\:\:contains\(\) expects \(callable\(Illuminate\\Database\\Eloquent\\Model, int\)\: bool\)\|Illuminate\\Database\\Eloquent\\Model\|int\|string, Closure\(OcGlobalTech\\CashierFiuu\\Subscription\)\: bool given\.$#'
+			identifier: argument.type
+			count: 1
+			path: tests/TestCase.php
+
+		-
+			message: '#^Parameter \#1 \$transaction of class OcGlobalTech\\CashierFiuu\\Events\\PaymentFailed constructor expects OcGlobalTech\\CashierFiuu\\Transaction, Illuminate\\Database\\Eloquent\\Model given\.$#'
+			identifier: argument.type
+			count: 1
+			path: tests/TestCase.php
+
+		-
+			message: '#^Parameter \#2 \$transaction of static method OcGlobalTech\\CashierFiuu\\Checkout\:\:make\(\) expects OcGlobalTech\\CashierFiuu\\Transaction, Illuminate\\Database\\Eloquent\\Model given\.$#'
+			identifier: argument.type
+			count: 1
+			path: tests/TestCase.php

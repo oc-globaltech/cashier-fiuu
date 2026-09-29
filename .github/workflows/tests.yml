@@ -1,0 +1,69 @@
+name: tests
+
+on:
+  push:
+    branches: ['1.*']
+  pull_request:
+  workflow_dispatch:
+  # A library's CI mostly goes red from upstream releases, not from its own commits.
+  schedule:
+    - cron: '0 1 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} (${{ matrix.stability }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Proves the lower bounds in composer.json actually work.
+          - { php: '8.1', laravel: '10', testbench: '8', stability: prefer-lowest }
+          - { php: '8.3', laravel: '10', testbench: '8', stability: prefer-stable }
+          - { php: '8.4', laravel: '11', testbench: '9', stability: prefer-stable }
+          - { php: '8.4', laravel: '12', testbench: '10', stability: prefer-stable }
+          - { php: '8.5', laravel: '13', testbench: '11', stability: prefer-stable }
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: intl, pdo_sqlite
+          coverage: none
+
+      # Testbench pins laravel/framework, which pins every illuminate/* package.
+      - name: Install dependencies
+        run: |
+          composer require "orchestra/testbench:^${{ matrix.testbench }}.0" --dev --no-update --no-interaction
+          composer update --${{ matrix.stability }} --prefer-dist --no-interaction --no-progress
+
+      - run: vendor/bin/phpunit
+
+  analyse:
+    name: Static analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: intl
+          coverage: none
+
+      - run: composer validate --strict
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - run: composer analyse -- --no-progress --error-format=github
